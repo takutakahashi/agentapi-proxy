@@ -1,0 +1,19 @@
+{{- $cfg := .Values.sessionPersistence | default dict -}}
+{{- $p := $cfg.persistence | default dict -}}
+{{- if and (eq ($cfg.backend | default "") "volume") ($p.enabled | default true) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-state
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml ($p.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $p.size | default "5Gi" | quote }}
+  {{- if $p.storageClass }}
+  storageClassName: {{ $p.storageClass | quote }}
+  {{- end }}
+{{- end }}

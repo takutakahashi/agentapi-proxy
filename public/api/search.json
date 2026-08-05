@@ -1,0 +1,47 @@
+{
+  "sessions": [
+    {
+      "session_id": "550e8400-e29b-41d4-a716-446655440000",
+      "user_id": "user-123",
+      "status": "active",
+      "started_at": "2024-01-01T12:00:00Z",
+      "port": 9000,
+      "tags": {
+        "repository": "agentapi-proxy",
+        "branch": "main",
+        "env": "production"
+      }
+    },
+    {
+      "session_id": "550e8400-e29b-41d4-a716-446655440001",
+      "user_id": "user-123",
+      "status": "active",
+      "started_at": "2024-01-01T12:05:00Z",
+      "port": 9001,
+      "tags": {
+        "repository": "another-repo",
+        "branch": "develop",
+        "env": "development"
+      }
+    },
+    {
+      "session_id": "550e8400-e29b-41d4-a716-446655440002",
+      "user_id": "user-456",
+      "status": "inactive",
+      "started_at": "2024-01-01T11:30:00Z",
+      "ended_at": "2024-01-01T11:45:00Z",
+      "port": 9002,
+      "tags": {
+        "repository": "test-repo",
+        "branch": "feature/test",
+        "env": "testing"
+      }
+    }
+  ],
+  "total": 3,
+  "filters_applied": {
+    "user_id": "user-123",
+    "status": null,
+    "tags": {}
+  }
+}

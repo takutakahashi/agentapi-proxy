@@ -1,0 +1,25 @@
+{{- $scia := .Values.scia | default dict }}
+{{- $sciaEnabled := true }}
+{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+{{- $sciaEnabled = $scia.enabled }}
+{{- end }}
+{{- if $sciaEnabled }}
+{{- $sciaService := $scia.service | default dict }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentapi-proxy.sciaServiceName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ $sciaService.port | default 8081 }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+{{- end }}

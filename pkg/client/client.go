@@ -1,0 +1,1408 @@
+package client
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
+)
+
+// HTTPClient defines the interface for making HTTP requests
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// RequestMiddleware is a function that modifies an HTTP request
+type RequestMiddleware func(*http.Request) error
+
+// Client represents an agentapi-proxy client
+type Client struct {
+	baseURL     string
+	httpClient  HTTPClient
+	middlewares []RequestMiddleware
+}
+
+// ClientOption is a function that configures a Client
+type ClientOption func(*Client)
+
+// NewClient creates a new agentapi-proxy client with options
+func NewClient(baseURL string, opts ...ClientOption) *Client {
+	c := &Client{
+		baseURL:     baseURL,
+		httpClient:  utils.NewDefaultHTTPClient(),
+		middlewares: []RequestMiddleware{},
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
+}
+
+// WithHTTPClient sets a custom HTTP client
+func WithHTTPClient(httpClient HTTPClient) ClientOption {
+	return func(c *Client) {
+		c.httpClient = httpClient
+	}
+}
+
+// WithAPIKeyAuth adds API key authentication middleware
+func WithAPIKeyAuth(apiKey string) ClientOption {
+	return func(c *Client) {
+		c.middlewares = append(c.middlewares, func(req *http.Request) error {
+			if apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+			return nil
+		})
+	}
+}
+
+// WithRequestMiddleware adds a custom request middleware
+func WithRequestMiddleware(middleware RequestMiddleware) ClientOption {
+	return func(c *Client) {
+		c.middlewares = append(c.middlewares, middleware)
+	}
+}
+
+// applyMiddlewares applies all registered middlewares to the request
+func (c *Client) applyMiddlewares(req *http.Request) error {
+	for _, middleware := range c.middlewares {
+		if err := middleware(req); err != nil {
+			return fmt.Errorf("middleware error: %w", err)
+		}
+	}
+	return nil
+}
+
+// StartParams contains optional session startup parameters.
+type StartParams struct {
+	Message   string `json:"message,omitempty"`
+	Oneshot   bool   `json:"oneshot,omitempty"`
+	AgentType string `json:"agent_type,omitempty"`
+	AuthProxy *bool  `json:"auth_proxy,omitempty"`
+}
+
+// StartRequest represents the request body for starting a new agentapi server
+type StartRequest struct {
+	Environment map[string]string `json:"environment,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Params      *StartParams      `json:"params,omitempty"`
+	Scope       string            `json:"scope,omitempty"`
+	TeamID      string            `json:"team_id,omitempty"`
+	MemoryKey   map[string]string `json:"memory_key,omitempty"`
+}
+
+// StartResponse represents the response from starting a new agentapi server
+type StartResponse struct {
+	SessionID string `json:"session_id"`
+}
+
+// SessionInfo represents information about a session
+type SessionInfo struct {
+	SessionID          string             `json:"session_id"`
+	AllocatedSessionID string             `json:"allocated_session_id,omitempty"`
+	UserID             string             `json:"user_id"`
+	Status             string             `json:"status"`
+	StartedAt          time.Time          `json:"started_at"`
+	Port               int                `json:"port"`
+	Tags               map[string]string  `json:"tags,omitempty"`
+	Annotations        SessionAnnotations `json:"annotations,omitempty"`
+	Metadata           SessionMetadata    `json:"metadata,omitempty"`
+}
+
+// SearchResponse represents the response from searching sessions
+type SearchResponse struct {
+	Sessions []SessionInfo `json:"sessions"`
+}
+
+// SessionAnnotations contains user-managed annotations attached to a session.
+type SessionAnnotations struct {
+	PRURL       string `json:"pr_url,omitempty"`
+	IssueURL    string `json:"issue_url,omitempty"`
+	Description string `json:"description,omitempty"`
+	RunningTask string `json:"running_task,omitempty"`
+}
+
+// SessionMetadata contains additional session metadata returned by /search.
+type SessionMetadata struct {
+	Description string `json:"description,omitempty"`
+}
+
+// UpdateSessionAnnotationsRequest partially updates user-managed session annotations.
+// Nil fields are left unchanged; an explicit empty string clears that annotation.
+type UpdateSessionAnnotationsRequest struct {
+	PRURL       *string `json:"pr_url,omitempty"`
+	IssueURL    *string `json:"issue_url,omitempty"`
+	Description *string `json:"description,omitempty"`
+	RunningTask *string `json:"running_task,omitempty"`
+}
+
+// UpdateSessionAnnotationsResponse is returned after updating session annotations.
+type UpdateSessionAnnotationsResponse struct {
+	SessionID   string             `json:"session_id"`
+	Annotations SessionAnnotations `json:"annotations"`
+	Metadata    SessionMetadata    `json:"metadata,omitempty"`
+}
+
+// Message represents an agentapi message
+type Message struct {
+	Content   string          `json:"content"`
+	Type      string          `json:"type"` // "user" or "raw"
+	Role      string          `json:"role,omitempty"`
+	Timestamp *time.Time      `json:"timestamp,omitempty"`
+	Time      *time.Time      `json:"time,omitempty"`
+	ID        json.RawMessage `json:"id,omitempty"`
+}
+
+// GetTimestamp returns the message timestamp, checking both Time and Timestamp fields.
+func (m *Message) GetTimestamp() *time.Time {
+	if m.Time != nil {
+		return m.Time
+	}
+	return m.Timestamp
+}
+
+// MessageResponse represents the response from sending a message
+type MessageResponse struct {
+	OK bool `json:"ok"`
+}
+
+// MessagesResponse represents the response from getting messages
+type MessagesResponse struct {
+	Messages []Message `json:"messages"`
+}
+
+// StatusResponse represents the agent status
+type StatusResponse struct {
+	Status string `json:"status"` // "stable" or "running"
+}
+
+// DeleteResponse represents the response from deleting a session
+type DeleteResponse struct {
+	Message   string `json:"message"`
+	SessionID string `json:"session_id"`
+}
+
+// CreateAssetRequest represents the request to upload an HTML asset.
+type CreateAssetRequest struct {
+	HTML string `json:"html"`
+}
+
+// AssetResponse represents an uploaded HTML asset.
+type AssetResponse struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// CreateAsset uploads HTML and returns an externally reachable asset URL.
+func (c *Client) CreateAsset(ctx context.Context, req *CreateAssetRequest) (*AssetResponse, error) {
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/assets", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var assetResp AssetResponse
+	if err := json.NewDecoder(resp.Body).Decode(&assetResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &assetResp, nil
+}
+
+// Start creates a new agentapi session
+func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, error) {
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/start", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var startResp StartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&startResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &startResp, nil
+}
+
+// Search lists and filters sessions
+func (c *Client) Search(ctx context.Context, status string) (*SearchResponse, error) {
+	return c.SearchWithTags(ctx, status, nil)
+}
+
+// SearchWithTags lists and filters sessions with tag support
+func (c *Client) SearchWithTags(ctx context.Context, status string, tags map[string]string) (*SearchResponse, error) {
+	u, err := url.Parse(c.baseURL + "/search")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if status != "" {
+		q.Set("status", status)
+	}
+	// Add tag filters
+	for key, value := range tags {
+		q.Set("tag."+key, value)
+	}
+	u.RawQuery = q.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var searchResp SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &searchResp, nil
+}
+
+// GetSessionByID retrieves a single session by its ID.
+// It calls the search endpoint and returns the first session with a matching SessionID.
+// Returns an error if the session is not found.
+func (c *Client) GetSessionByID(ctx context.Context, sessionID string) (*SessionInfo, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+
+	resp, err := c.Search(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to search sessions: %w", err)
+	}
+
+	for i := range resp.Sessions {
+		if resp.Sessions[i].SessionID == sessionID {
+			return &resp.Sessions[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("session %s not found", sessionID)
+}
+
+// DeleteSession terminates and deletes a session
+func (c *Client) DeleteSession(ctx context.Context, sessionID string) (*DeleteResponse, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+
+	url := fmt.Sprintf("%s/sessions/%s", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var deleteResp DeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&deleteResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &deleteResp, nil
+}
+
+// UpdateSessionAnnotations updates user-managed annotations for a session.
+func (c *Client) UpdateSessionAnnotations(ctx context.Context, sessionID string, req *UpdateSessionAnnotationsRequest) (*UpdateSessionAnnotationsResponse, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/sessions/%s/annotations", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "PATCH", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var updateResp UpdateSessionAnnotationsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&updateResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &updateResp, nil
+}
+
+// SendMessage sends a message to an agentapi session
+func (c *Client) SendMessage(ctx context.Context, sessionID string, message *Message) (*MessageResponse, error) {
+	jsonData, err := json.Marshal(message)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/%s/message", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var msgResp MessageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&msgResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &msgResp, nil
+}
+
+// GetMessages retrieves conversation history from an agentapi session
+func (c *Client) GetMessages(ctx context.Context, sessionID string) (*MessagesResponse, error) {
+	url := fmt.Sprintf("%s/%s/messages", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var messagesResp MessagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&messagesResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &messagesResp, nil
+}
+
+// GetStatus retrieves the current agent status from an agentapi session
+func (c *Client) GetStatus(ctx context.Context, sessionID string) (*StatusResponse, error) {
+	url := fmt.Sprintf("%s/%s/status", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var statusResp StatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &statusResp, nil
+}
+
+// TaskLink represents a link associated with a task
+type TaskLink struct {
+	ID    string `json:"id,omitempty"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
+// CreateTaskRequest represents the request body for creating a new task.
+// SessionID is set automatically from the sessionID function argument.
+type CreateTaskRequest struct {
+	Title       string     `json:"title"`
+	Description string     `json:"description,omitempty"`
+	TaskType    string     `json:"task_type"`         // "user" or "agent"
+	Scope       string     `json:"scope"`             // "user" or "team"
+	TeamID      string     `json:"team_id,omitempty"` // required when scope=="team"
+	GroupID     string     `json:"group_id,omitempty"`
+	SessionID   string     `json:"session_id"` // set from function argument
+	Links       []TaskLink `json:"links,omitempty"`
+}
+
+// UpdateTaskRequest represents the request body for partially updating a task.
+// Only non-nil fields are updated.
+type UpdateTaskRequest struct {
+	Title       *string     `json:"title,omitempty"`
+	Description *string     `json:"description,omitempty"`
+	Status      *string     `json:"status,omitempty"` // "todo" or "done"
+	GroupID     *string     `json:"group_id,omitempty"`
+	SessionID   *string     `json:"session_id,omitempty"`
+	Links       *[]TaskLink `json:"links,omitempty"`
+}
+
+// TaskResponse represents a single task returned by the API
+type TaskResponse struct {
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description,omitempty"`
+	Status      string     `json:"status"`
+	TaskType    string     `json:"task_type"`
+	Scope       string     `json:"scope"`
+	OwnerID     string     `json:"owner_id"`
+	TeamID      string     `json:"team_id,omitempty"`
+	GroupID     string     `json:"group_id,omitempty"`
+	SessionID   string     `json:"session_id,omitempty"`
+	Links       []TaskLink `json:"links"`
+	CreatedAt   string     `json:"created_at"`
+	UpdatedAt   string     `json:"updated_at"`
+}
+
+// TaskListResponse represents a list of tasks
+type TaskListResponse struct {
+	Tasks []*TaskResponse `json:"tasks"`
+	Total int             `json:"total"`
+}
+
+// ListTasksOptions specifies optional filters for listing tasks
+type ListTasksOptions struct {
+	Scope    string // "user" or "team"
+	TeamID   string
+	GroupID  string
+	Status   string // "todo" or "done"
+	TaskType string // "user" or "agent"
+}
+
+// CreateTask creates a new task associated with the given session.
+// sessionID is required and will be embedded in the request body.
+func (c *Client) CreateTask(ctx context.Context, sessionID string, req *CreateTaskRequest) (*TaskResponse, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	// Inject sessionID into the request body
+	req.SessionID = sessionID
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/tasks", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var taskResp TaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &taskResp, nil
+}
+
+// GetTask retrieves a task by its ID
+func (c *Client) GetTask(ctx context.Context, taskID string) (*TaskResponse, error) {
+	if taskID == "" {
+		return nil, fmt.Errorf("task ID is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/tasks/%s", c.baseURL, taskID)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("task not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var taskResp TaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &taskResp, nil
+}
+
+// ListTasks retrieves a list of tasks with optional filters
+func (c *Client) ListTasks(ctx context.Context, opts *ListTasksOptions) (*TaskListResponse, error) {
+	u, err := url.Parse(c.baseURL + "/tasks")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	if opts != nil {
+		q := u.Query()
+		if opts.Scope != "" {
+			q.Set("scope", opts.Scope)
+		}
+		if opts.TeamID != "" {
+			q.Set("team_id", opts.TeamID)
+		}
+		if opts.GroupID != "" {
+			q.Set("group_id", opts.GroupID)
+		}
+		if opts.Status != "" {
+			q.Set("status", opts.Status)
+		}
+		if opts.TaskType != "" {
+			q.Set("task_type", opts.TaskType)
+		}
+		u.RawQuery = q.Encode()
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var listResp TaskListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &listResp, nil
+}
+
+// UpdateTask partially updates an existing task
+func (c *Client) UpdateTask(ctx context.Context, taskID string, req *UpdateTaskRequest) (*TaskResponse, error) {
+	if taskID == "" {
+		return nil, fmt.Errorf("task ID is required")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/tasks/%s", c.baseURL, taskID)
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("task not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var taskResp TaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &taskResp, nil
+}
+
+// DeleteTask deletes a task by its ID
+func (c *Client) DeleteTask(ctx context.Context, taskID string) error {
+	if taskID == "" {
+		return fmt.Errorf("task ID is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/tasks/%s", c.baseURL, taskID)
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("task not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// MemoryEntry represents a memory entry from the proxy
+type MemoryEntry struct {
+	ID        string            `json:"id"`
+	Title     string            `json:"title"`
+	Content   string            `json:"content"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	Scope     string            `json:"scope"`
+	OwnerID   string            `json:"owner_id"`
+	TeamID    string            `json:"team_id,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// MemoryListResponse represents the response from listing memories
+type MemoryListResponse struct {
+	Memories []*MemoryEntry `json:"memories"`
+	Total    int            `json:"total"`
+}
+
+// CreateMemoryRequest represents the request to create a memory entry
+type CreateMemoryRequest struct {
+	Title   string            `json:"title"`
+	Content string            `json:"content,omitempty"`
+	Scope   string            `json:"scope"`
+	TeamID  string            `json:"team_id,omitempty"`
+	Tags    map[string]string `json:"tags,omitempty"`
+}
+
+// UpdateMemoryRequest represents the request to update a memory entry
+type UpdateMemoryRequest struct {
+	Title   string            `json:"title,omitempty"`
+	Content string            `json:"content,omitempty"`
+	Tags    map[string]string `json:"tags,omitempty"`
+}
+
+// ListMemories lists memory entries with optional filters.
+// scope: "user" or "team". teamID: required when scope="team".
+// tags: AND-combined tag filter map.
+// excludeTags: memories matching ALL of these tags are excluded (nil = no exclusion).
+func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags map[string]string, excludeTags map[string]string) (*MemoryListResponse, error) {
+	u, err := url.Parse(c.baseURL + "/memories")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if scope != "" {
+		q.Set("scope", scope)
+	}
+	if teamID != "" {
+		q.Set("team_id", teamID)
+	}
+	for k, v := range tags {
+		q.Set("include_tag."+k, v)
+	}
+	for k, v := range excludeTags {
+		q.Set("exclude_tag."+k, v)
+	}
+	u.RawQuery = q.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var listResp MemoryListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &listResp, nil
+}
+
+// ListMemoriesUnion returns the union of memories matching any of the given tags (OR logic).
+// For each tag key-value pair, a separate API call is made and results are deduplicated by ID.
+// If tags is empty or contains a single entry, behaves identically to ListMemories.
+func (c *Client) ListMemoriesUnion(ctx context.Context, scope, teamID string, tags map[string]string) (*MemoryListResponse, error) {
+	if len(tags) <= 1 {
+		return c.ListMemories(ctx, scope, teamID, tags, nil)
+	}
+
+	seen := make(map[string]*MemoryEntry)
+	var order []string
+
+	for k, v := range tags {
+		singleTag := map[string]string{k: v}
+		resp, err := c.ListMemories(ctx, scope, teamID, singleTag, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range resp.Memories {
+			if _, exists := seen[m.ID]; !exists {
+				seen[m.ID] = m
+				order = append(order, m.ID)
+			}
+		}
+	}
+
+	memories := make([]*MemoryEntry, 0, len(order))
+	for _, id := range order {
+		memories = append(memories, seen[id])
+	}
+	return &MemoryListResponse{Memories: memories}, nil
+}
+
+// GetMemory retrieves a memory entry by ID
+func (c *Client) GetMemory(ctx context.Context, id string) (*MemoryEntry, error) {
+	if id == "" {
+		return nil, fmt.Errorf("memory ID is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/memories/%s", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("memory not found: %s", id)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var entry MemoryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// CreateMemory creates a new memory entry
+func (c *Client) CreateMemory(ctx context.Context, req *CreateMemoryRequest) (*MemoryEntry, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/memories", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var entry MemoryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// UpdateMemory updates an existing memory entry
+func (c *Client) UpdateMemory(ctx context.Context, id string, req *UpdateMemoryRequest) (*MemoryEntry, error) {
+	if id == "" {
+		return nil, fmt.Errorf("memory ID is required")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/memories/%s", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("memory not found: %s", id)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var entry MemoryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// DeleteMemory deletes a memory entry by ID
+func (c *Client) DeleteMemory(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("memory ID is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/memories/%s", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("memory not found: %s", id)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// UpsertMemory creates or updates a memory entry matching the given key tags.
+// keyTags are used to look up existing memories (AND logic).
+// If exactly one match is found: update it.
+// If no match is found: create a new entry with keyTags merged into the entry's tags.
+// If multiple matches are found: update the most recently updated one.
+func (c *Client) UpsertMemory(ctx context.Context, scope, teamID, title, content string, keyTags map[string]string) (*MemoryEntry, error) {
+	// Search for existing memories matching keyTags (no exclusion for upsert lookups)
+	existing, err := c.ListMemories(ctx, scope, teamID, keyTags, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list memories for upsert: %w", err)
+	}
+
+	if len(existing.Memories) > 0 {
+		// Find the most recently updated entry
+		target := existing.Memories[0]
+		for _, m := range existing.Memories[1:] {
+			if m.UpdatedAt.After(target.UpdatedAt) {
+				target = m
+			}
+		}
+
+		// Update the existing entry
+		updateReq := &UpdateMemoryRequest{
+			Title:   title,
+			Content: content,
+		}
+		return c.UpdateMemory(ctx, target.ID, updateReq)
+	}
+
+	// No existing entry — create a new one with keyTags as tags
+	createReq := &CreateMemoryRequest{
+		Title:   title,
+		Content: content,
+		Scope:   scope,
+		TeamID:  teamID,
+		Tags:    keyTags,
+	}
+	return c.CreateMemory(ctx, createReq)
+}
+
+// SendNotificationRequest represents the request for sending a push notification via API
+type SendNotificationRequest struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	SessionID string `json:"session_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+}
+
+// SendNotificationResponse represents the response for sending a push notification via API
+type SendNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+// SendNotification sends a push notification via the API.
+// Either SessionID or UserID must be specified.
+func (c *Client) SendNotification(ctx context.Context, req *SendNotificationRequest) (*SendNotificationResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/notifications/send", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var sendResp SendNotificationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sendResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &sendResp, nil
+}
+
+// StreamEvents subscribes to Server-Sent Events (SSE) from an agentapi session
+func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan string, <-chan error) {
+	eventChan := make(chan string, 100)
+	errorChan := make(chan error, 1)
+
+	go func() {
+		defer close(eventChan)
+		defer close(errorChan)
+
+		url := fmt.Sprintf("%s/%s/events", c.baseURL, sessionID)
+		httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			errorChan <- fmt.Errorf("failed to create request: %w", err)
+			return
+		}
+		httpReq.Header.Set("Accept", "text/event-stream")
+		httpReq.Header.Set("Cache-Control", "no-cache")
+
+		if err := c.applyMiddlewares(httpReq); err != nil {
+			errorChan <- err
+			return
+		}
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			errorChan <- fmt.Errorf("failed to send request: %w", err)
+			return
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			errorChan <- fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+
+			select {
+			case eventChan <- line:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			errorChan <- fmt.Errorf("error reading response: %w", err)
+		}
+	}()
+
+	return eventChan, errorChan
+}
+
+// ProxySessionStatusEvent is a proxy-level event emitted whenever any session's status changes.
+type ProxySessionStatusEvent struct {
+	SessionID string    `json:"session_id"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// WatchSessionsStatus subscribes to proxy-wide session status changes via SSE.
+// The returned channel receives a ProxySessionStatusEvent whenever any accessible session
+// changes status. The caller must cancel ctx to stop the stream; both channels are closed
+// when the stream ends.
+func (c *Client) WatchSessionsStatus(ctx context.Context) (<-chan ProxySessionStatusEvent, <-chan error) {
+	eventChan := make(chan ProxySessionStatusEvent, 32)
+	errorChan := make(chan error, 1)
+
+	go func() {
+		defer close(eventChan)
+		defer close(errorChan)
+
+		reqURL := fmt.Sprintf("%s/sessions/status/stream", c.baseURL)
+		httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		if err != nil {
+			errorChan <- fmt.Errorf("failed to create request: %w", err)
+			return
+		}
+		httpReq.Header.Set("Accept", "text/event-stream")
+		httpReq.Header.Set("Cache-Control", "no-cache")
+
+		if err := c.applyMiddlewares(httpReq); err != nil {
+			errorChan <- err
+			return
+		}
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			errorChan <- fmt.Errorf("failed to send request: %w", err)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			errorChan <- fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+			return
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue // skip heartbeat comments and blank lines
+			}
+			var evt ProxySessionStatusEvent
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err != nil {
+				continue // skip malformed events
+			}
+			select {
+			case eventChan <- evt:
+			case <-ctx.Done():
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			errorChan <- fmt.Errorf("error reading stream: %w", err)
+		}
+	}()
+
+	return eventChan, errorChan
+}
+
+// WaitSessionsStatus long-polls for the next proxy-wide session status change.
+// It blocks until any accessible session changes status or until the timeout elapses.
+// Returns the event on change, or (nil, nil) on timeout.
+// timeoutSec=0 uses the server default (30 s). Valid range: 1–60.
+func (c *Client) WaitSessionsStatus(ctx context.Context, timeoutSec int) (*ProxySessionStatusEvent, error) {
+	u, err := url.Parse(fmt.Sprintf("%s/sessions/status/wait", c.baseURL))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+	if timeoutSec > 0 {
+		q := u.Query()
+		q.Set("timeout", fmt.Sprintf("%d", timeoutSec))
+		u.RawQuery = q.Encode()
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Timeout response: {"events": []}
+	var evt ProxySessionStatusEvent
+	if err := json.Unmarshal(body, &evt); err != nil || evt.SessionID == "" {
+		return nil, nil
+	}
+	return &evt, nil
+}

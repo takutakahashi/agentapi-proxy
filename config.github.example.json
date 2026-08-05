@@ -1,0 +1,36 @@
+{
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "user_mapping": {
+        "default_role": "guest",
+        "default_permissions": ["read"],
+        "team_role_mapping": {
+          "mycompany/platform-team": {
+            "role": "admin",
+            "permissions": ["*"]
+          },
+          "mycompany/backend-developers": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute", "debug"]
+          },
+          "mycompany/frontend-developers": {
+            "role": "developer", 
+            "permissions": ["read", "write", "execute"]
+          },
+          "mycompany/qa-team": {
+            "role": "tester",
+            "permissions": ["read", "execute"]
+          },
+          "partnerorg/consultants": {
+            "role": "contractor",
+            "permissions": ["read", "limited_write"]
+          }
+        }
+      }
+    }
+  }
+}

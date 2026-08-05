@@ -1,0 +1,36 @@
+{
+  "api_keys": [
+    {
+      "key": "ap_admin_key_123456789abcdef",
+      "user_id": "admin",
+      "role": "admin",
+      "permissions": ["*"],
+      "created_at": "2024-06-14T00:00:00Z",
+      "expires_at": "2025-06-14T00:00:00Z"
+    },
+    {
+      "key": "ap_user_alice_987654321fedcba",
+      "user_id": "alice",
+      "role": "user",
+      "permissions": ["session:create", "session:list", "session:delete", "session:access"],
+      "created_at": "2024-06-14T00:00:00Z",
+      "expires_at": "2025-06-14T00:00:00Z"
+    },
+    {
+      "key": "ap_user_bob_112233445566778",
+      "user_id": "bob",
+      "role": "user",
+      "permissions": ["session:create", "session:list", "session:delete", "session:access"],
+      "created_at": "2024-06-14T00:00:00Z",
+      "expires_at": "2025-06-14T00:00:00Z"
+    },
+    {
+      "key": "ap_readonly_charlie_aabbccddeeff",
+      "user_id": "charlie",
+      "role": "readonly",
+      "permissions": ["session:list"],
+      "created_at": "2024-06-14T00:00:00Z",
+      "expires_at": "2025-06-14T00:00:00Z"
+    }
+  ]
+}

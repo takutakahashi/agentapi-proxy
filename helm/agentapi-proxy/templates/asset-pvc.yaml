@@ -1,0 +1,28 @@
+{{- $asset := .Values.asset | default dict -}}
+{{- $assetBackend := $asset.backend | default "nginx" -}}
+{{- $assetEnabled := true -}}
+{{- if hasKey $asset "enabled" -}}
+{{- $assetEnabled = $asset.enabled -}}
+{{- end -}}
+{{- $assetPersistence := $asset.persistence | default dict -}}
+{{- $assetPersistenceEnabled := true -}}
+{{- if hasKey $assetPersistence "enabled" -}}
+{{- $assetPersistenceEnabled = $assetPersistence.enabled -}}
+{{- end -}}
+{{- if and $assetEnabled (eq $assetBackend "nginx") $assetPersistenceEnabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-assets
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml ($assetPersistence.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $assetPersistence.size | default "1Gi" | quote }}
+  {{- if $assetPersistence.storageClass }}
+  storageClassName: {{ $assetPersistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,36 @@
+{
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "oauth": {
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "scope": "public_repo workflow read:org project notifications user:email",
+        "base_url": "https://github.com",
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token"
+      },
+      "user_mapping": {
+        "default_role": "contributor",
+        "default_permissions": ["read", "write", "session:create", "session:list"],
+        "team_role_mapping": {
+          "myorg/maintainers": {
+            "role": "maintainer",
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"]
+          },
+          "myorg/contributors": {
+            "role": "contributor",
+            "permissions": ["read", "write", "session:create", "session:list", "session:access"]
+          },
+          "myorg/external-contributors": {
+            "role": "external-contributor",
+            "permissions": ["read", "session:create", "session:list"]
+          }
+        }
+      }
+    }
+  }
+}

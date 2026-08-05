@@ -1,0 +1,24 @@
+---
+apiVersion: v2
+name: agentapi-proxy
+description: A Helm chart for AgentAPI Proxy - a reverse proxy and process manager for agentapi server instances
+type: application
+version: 0.3.0
+appVersion: "1.173.0"
+home: https://github.com/takutakahashi/agentapi-proxy
+sources:
+  - https://github.com/takutakahashi/agentapi-proxy
+maintainers:
+  - name: takutakahashi
+keywords:
+  - proxy
+  - api
+  - claude
+  - session-management
+dependencies:
+  # Redis is used for cross-pod session status synchronisation.
+  # Set redis.enabled=false to disable it (single-replica deployments do not need it).
+  - name: redis
+    version: "21.x.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: redis.enabled

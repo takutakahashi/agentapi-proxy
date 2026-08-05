@@ -1,0 +1,49 @@
+{{- $scheduleWorkerEnabled := .Values.scheduleWorker.enabled }}
+{{- $slackbotCleanupWorkerEnabled := .Values.slackbotCleanupWorker.enabled }}
+{{- $stockInventoryWorkerEnabled := .Values.stockInventoryWorker.enabled }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled $stockInventoryWorkerEnabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-manager
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+rules:
+  {{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
+  - apiGroups: [""]
+    resources: ["pods"]
+    # update: required for adoptStockSession when stock sessions run as Pods.
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    # patch: required for UpdateSlackLastMessageAt (agentapi.proxy/slack-last-message-at annotation)
+    # update: required for UpdateServiceAnnotation (e.g. agentapi.proxy/updated-at annotation)
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    # Lazy chat recovery checks whether the session Service has a ready Pod.
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    # update/patch: required for adoptStockSession (removing agentapi.proxy/stock label)
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  {{- if or $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled $stockInventoryWorkerEnabled }}
+  # Leader election for schedule worker and/or slackbot cleanup worker
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
+{{- end }}

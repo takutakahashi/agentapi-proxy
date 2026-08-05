@@ -1,0 +1,6303 @@
+package services
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/kubernetes"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/yaml"
+
+	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
+)
+
+// provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
+// It serves local health/status and sandbox-domain endpoints; provisioning work
+// is pulled from the proxy internal API by the session Pod.
+const provisionerPort = 9001
+
+const (
+	sessionSuspendAtAnnotation   = "agentapi.proxy/suspend-at"
+	sessionSuspendedAtAnnotation = "agentapi.proxy/suspended-at"
+)
+
+// ProvisionerPort is the exported version of provisionerPort for use by other packages
+// (e.g. the session controller error handler that checks provisioner /status).
+const ProvisionerPort = provisionerPort
+
+// nfaProxyPort is the default forward proxy port exposed by takutakahashi/nfa.
+const nfaProxyPort = 3128
+
+// KubernetesSessionManager manages sessions using Kubernetes Deployments
+// ServiceAccountEnsurer ensures a service account exists for a team.
+// Implementations must be safe to call concurrently.
+type ServiceAccountEnsurer interface {
+	EnsureServiceAccount(ctx context.Context, teamID string) error
+}
+
+// PersonalAPIKeyLoader registers a newly-created personal API key in the
+// authentication layer so it can be used immediately without a proxy restart.
+// Implementations must be safe to call concurrently.
+type PersonalAPIKeyLoader interface {
+	LoadPersonalAPIKey(ctx context.Context, apiKey *entities.PersonalAPIKey) error
+}
+
+// SessionStatusEvent represents a proxy-level status change event for any session.
+// It is emitted by KubernetesSessionManager whenever a session's status changes,
+// and is delivered to all active SSE/long-poll subscribers.
+type SessionStatusEvent struct {
+	SessionID string    `json:"session_id"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// SessionMessageEvent represents a message_update event for a specific session.
+// It is emitted by KubernetesSessionManager whenever the agentapi backend for a session
+// sends a message_update SSE event, and is delivered to per-session long-poll subscribers.
+type SessionMessageEvent struct {
+	SessionID string    `json:"session_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
+// are removed. At this point the session's Service endpoint is still reachable, so handlers
+// can safely call GetMessages or other in-session APIs.
+// Handlers are called synchronously and their errors are intentionally ignored so that
+// session deletion always proceeds regardless of handler failures.
+type SessionDeletedHandler func(ctx context.Context, session entities.Session)
+
+type KubernetesSessionManager struct {
+	config                *config.Config
+	k8sConfig             *config.KubernetesSessionConfig
+	client                kubernetes.Interface
+	verbose               bool
+	logger                *logger.Logger
+	sessions              map[string]*KubernetesSession
+	mutex                 sync.RWMutex
+	namespace             string
+	settingsRepo          portrepos.SettingsRepository
+	teamConfigRepo        portrepos.TeamConfigRepository
+	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
+	sandboxPolicyRepo     portrepos.SandboxPolicyRepository
+	personalAPIKeyLoader  PersonalAPIKeyLoader
+	serviceAccountEnsurer ServiceAccountEnsurer
+	// onSessionDeletedHandlers holds callbacks registered via AddSessionDeletedHandler.
+	// Protected by handlersMutex.
+	onSessionDeletedHandlers []SessionDeletedHandler
+	handlersMutex            sync.RWMutex
+
+	// Proxy-wide status change pub/sub.
+	// globalSubs maps subscriber ID → buffered channel of SessionStatusEvent.
+	// Protected by globalSubsMu.
+	globalSubsMu    sync.Mutex
+	globalSubs      map[uint64]chan SessionStatusEvent
+	nextGlobalSubID uint64
+
+	// Per-session message update pub/sub.
+	// messageSubs[sessionID][subscriberID] = buffered channel of SessionMessageEvent.
+	// Protected by messageSubsMu.
+	messageSubsMu    sync.Mutex
+	messageSubs      map[string]map[uint64]chan SessionMessageEvent
+	nextMessageSubID uint64
+
+	// statusEventRepo is the cross-pod status synchronisation backend.
+	// When Redis is configured this is a RedisStatusRepository; otherwise it is
+	// a NoopStatusRepository that keeps the existing single-pod behaviour.
+	statusEventRepo portrepos.StatusEventRepository
+	// podID uniquely identifies this proxy instance for Pub/Sub deduplication.
+	podID string
+	// statusSubCtx / statusSubCancel control the lifetime of the Redis subscriber goroutine.
+	statusSubCtx    context.Context
+	statusSubCancel context.CancelFunc
+	suspendCancel   context.CancelFunc
+
+	// sessionListCacheRepo is the short-lived session-list cache backend.
+	// When Redis is configured this reduces Kubernetes API calls for frequent
+	// ListSessions requests.
+	sessionListCacheRepo portrepos.SessionListCacheRepository
+
+	// sessionAllocatorEnabled routes CreateSession through the leader-elected
+	// SessionAllocator when the server has started that worker.
+	sessionAllocatorEnabled bool
+
+	sessionAllocationNotifier coreallocation.Notifier
+}
+
+// NewKubernetesSessionManager creates a new KubernetesSessionManager
+func NewKubernetesSessionManager(
+	cfg *config.Config,
+	verbose bool,
+	lgr *logger.Logger,
+) (*KubernetesSessionManager, error) {
+	// Get config using controller-runtime (supports in-cluster and kubeconfig)
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubernetes config: %w", err)
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	return NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, client)
+}
+
+// NewKubernetesSessionManagerWithClient creates a new KubernetesSessionManager with a custom client
+// This is useful for testing with a fake client
+func NewKubernetesSessionManagerWithClient(
+	cfg *config.Config,
+	verbose bool,
+	lgr *logger.Logger,
+	client kubernetes.Interface,
+) (*KubernetesSessionManager, error) {
+	k8sConfig := &cfg.KubernetesSession
+
+	// Determine namespace
+	namespace := resolveKubernetesNamespace(k8sConfig.Namespace)
+
+	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
+
+	// Determine pod identity for Pub/Sub deduplication.
+	podID, _ := os.Hostname()
+	if podID == "" {
+		podID = "unknown"
+	}
+
+	subCtx, subCancel := context.WithCancel(context.Background())
+
+	manager := &KubernetesSessionManager{
+		config:                    cfg,
+		k8sConfig:                 k8sConfig,
+		client:                    client,
+		verbose:                   verbose,
+		logger:                    lgr,
+		sessions:                  make(map[string]*KubernetesSession),
+		namespace:                 namespace,
+		globalSubs:                make(map[uint64]chan SessionStatusEvent),
+		messageSubs:               make(map[string]map[uint64]chan SessionMessageEvent),
+		podID:                     podID,
+		statusSubCtx:              subCtx,
+		statusSubCancel:           subCancel,
+		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := manager.ensureProvisionerToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure provisioner token: %w", err)
+	}
+
+	// Ensure OpenTelemetry Collector ConfigMap exists
+	if err := manager.ensureOtelcolConfigMap(ctx); err != nil {
+		log.Printf("[K8S_SESSION] Warning: Failed to ensure otelcol ConfigMap: %v", err)
+		// Don't fail initialization if ConfigMap creation fails
+	}
+	if cfg.SessionPersistence.Backend != "" && cfg.SessionPersistence.SuspendAfter != "" && cfg.SessionPersistence.SuspendAfter != "0" {
+		if _, err := time.ParseDuration(cfg.SessionPersistence.SuspendAfter); err != nil {
+			return nil, fmt.Errorf("invalid session_persistence.suspend_after: %w", err)
+		}
+		suspendCtx, suspendCancel := context.WithCancel(context.Background())
+		manager.suspendCancel = suspendCancel
+		go manager.runSessionSuspendReconciler(suspendCtx)
+	}
+
+	return manager, nil
+}
+
+// ScheduleSessionSuspend persists the deadline on the canonical Service. The
+// annotation survives proxy restarts and is reconciled by every proxy replica.
+func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, sessionID string) error {
+	after, err := time.ParseDuration(m.config.SessionPersistence.SuspendAfter)
+	if err != nil || after <= 0 {
+		return fmt.Errorf("session suspend timer is disabled")
+	}
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
+	}
+	deadline := time.Now().Add(after).UTC().Format(time.RFC3339Nano)
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation))
+	if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("persist suspend deadline: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Session %s scheduled to suspend at %s", sessionID, deadline)
+	return nil
+}
+
+func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		m.reconcileSessionSuspends(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context) {
+	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "agentapi.proxy/session-id"})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list session suspend timers: %v", err)
+		return
+	}
+	now := time.Now()
+	for i := range services.Items {
+		svc := &services.Items[i]
+		deadline, err := time.Parse(time.RFC3339Nano, svc.Annotations[sessionSuspendAtAnnotation])
+		if err != nil || deadline.After(now) {
+			continue
+		}
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			continue
+		}
+		if session := m.GetSession(sessionID); session != nil && session.Status() == "running" {
+			// A newer turn started before the old deadline. Move the deadline out;
+			// its Stop hook will replace this with the exact turn-end deadline.
+			_ = m.ScheduleSessionSuspend(ctx, sessionID)
+			continue
+		}
+		if err := m.suspendSessionWorkload(ctx, sessionID, svc); err != nil {
+			log.Printf("[K8S_SESSION] Failed to suspend session %s: %v", sessionID, err)
+		}
+	}
+}
+
+func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, sessionID string, svc *corev1.Service) error {
+	// Mark the session before deleting its workload so the deployment watcher
+	// cannot race with suspension and replace the canonical state with stopped.
+	if session := m.GetSession(sessionID); session != nil {
+		if ks, ok := session.(*KubernetesSession); ok {
+			ks.SetStatus("suspended")
+		}
+	}
+	workloadName := strings.TrimSuffix(svc.Name, "-svc")
+	if m.isPVCEnabled() {
+		err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, workloadName, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	} else {
+		err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, workloadName, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+	}
+	suspendedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":%q}}}`, sessionSuspendAtAnnotation, sessionSuspendedAtAnnotation, suspendedAt))
+	if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, svc.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return err
+	}
+	log.Printf("[K8S_SESSION] Suspended session %s; canonical state retained for lazy resume", sessionID)
+	return nil
+}
+
+func resolveKubernetesNamespace(candidates ...string) string {
+	for _, candidate := range candidates {
+		if namespace := strings.TrimSpace(candidate); namespace != "" {
+			return namespace
+		}
+	}
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if namespace := strings.TrimSpace(string(data)); namespace != "" {
+			return namespace
+		}
+	}
+	return "default"
+}
+
+// SetStatusEventRepository injects a StatusEventRepository for cross-pod status
+// synchronisation.  It must be called before the manager starts handling traffic.
+// If repo is nil the existing no-op fallback is kept.
+func (m *KubernetesSessionManager) SetStatusEventRepository(repo portrepos.StatusEventRepository) {
+	if repo == nil {
+		return
+	}
+	m.statusEventRepo = repo
+	log.Printf("[K8S_SESSION] StatusEventRepository configured (podID=%s)", m.podID)
+
+	// Start the Redis subscriber goroutine that fans out cross-pod events to
+	// local SSE subscribers.
+	go m.runStatusSubscriber(m.statusSubCtx)
+}
+
+// SetSessionListCacheRepository injects a SessionListCacheRepository for
+// short-lived session-list caching.  Must be called before the manager starts
+// handling traffic.  If repo is nil the call is ignored.
+func (m *KubernetesSessionManager) SetSessionListCacheRepository(repo portrepos.SessionListCacheRepository) {
+	if repo == nil {
+		return
+	}
+	m.sessionListCacheRepo = repo
+	log.Printf("[K8S_SESSION] SessionListCacheRepository configured")
+}
+
+// runStatusSubscriber subscribes to the global status-change channel and
+// forwards incoming events to local in-process SSE subscribers.
+// Events that originated from this pod are ignored (self-dedup).
+func (m *KubernetesSessionManager) runStatusSubscriber(ctx context.Context) {
+	log.Printf("[K8S_SESSION] Starting cross-pod status subscriber (podID=%s)", m.podID)
+	for {
+		ch, err := m.statusEventRepo.SubscribeGlobal(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				log.Printf("[K8S_SESSION] Status subscriber context cancelled, stopping")
+				return
+			}
+			log.Printf("[K8S_SESSION] Failed to subscribe to global status channel, retrying in 5s: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+		log.Printf("[K8S_SESSION] Cross-pod status subscriber connected")
+		m.consumeStatusEvents(ctx, ch)
+		if ctx.Err() != nil {
+			return
+		}
+		// Channel closed — reconnect after a short back-off.
+		log.Printf("[K8S_SESSION] Status subscriber channel closed, reconnecting in 3s")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// consumeStatusEvents reads events from ch until it is closed or ctx is cancelled.
+// Events from this pod are silently discarded to avoid duplicate broadcasts.
+func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <-chan portrepos.StatusChangeEvent) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Skip events that were published by this pod — we already broadcast
+			// those locally at the time of the status change.
+			if evt.PodID == m.podID {
+				continue
+			}
+			log.Printf("[K8S_SESSION] Cross-pod status event: session=%s status=%s from=%s",
+				evt.SessionID, evt.Status, evt.PodID)
+
+			// Update in-memory status if the session is loaded on this pod.
+			m.mutex.RLock()
+			session, exists := m.sessions[evt.SessionID]
+			m.mutex.RUnlock()
+			if exists {
+				session.SetStatusSilent(evt.Status)
+			}
+
+			// Forward to local SSE subscribers only.
+			// IMPORTANT: do NOT call broadcastStatusChange here because that
+			// function also re-publishes to Redis, which would create an infinite
+			// feedback loop across pods (Pod B re-publishes → Pod C processes →
+			// Pod C re-publishes → Pod A processes → ...).
+			m.broadcastStatusChangeLocal(evt.SessionID, evt.Status)
+		}
+	}
+}
+
+// StopStatusSubscriber cancels the background Redis subscriber goroutine.
+// Should be called on graceful shutdown.
+func (m *KubernetesSessionManager) StopStatusSubscriber() {
+	if m.statusSubCancel != nil {
+		m.statusSubCancel()
+	}
+}
+
+// allocateSessionDirect creates or adopts Kubernetes resources for a session.
+// It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
+// If no stock is available, a new session is created from scratch.
+func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	applySandboxDefaults(req)
+
+	// Attempt to adopt a stock session matching the requested pod capabilities
+	// before creating a new one.
+	if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
+	} else if stockSvc != nil {
+		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
+		if claimErr != nil {
+			log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
+		} else {
+			log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
+			return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+		}
+	}
+
+	// Create session context
+	sessionCtx, cancel := context.WithCancel(context.Background())
+
+	// Generate resource names
+	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
+
+	// Create KubernetesSession using constructor
+	session := NewKubernetesSession(
+		id,
+		req,
+		deploymentName,
+		serviceName,
+		pvcName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+		cancel,
+		webhookPayload,
+	)
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
+	// Store session
+	m.mutex.Lock()
+	m.sessions[id] = session
+	m.mutex.Unlock()
+
+	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
+
+	// Create Service first. It is the canonical session resource and owns every
+	// other per-session Kubernetes resource through ownerReferences.
+	if err := m.createService(ctx, session); err != nil {
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create Service: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Created Service %s for session %s", serviceName, id)
+
+	// Create PVC if enabled
+	if m.isPVCEnabled() {
+		if err := m.createPVC(ctx, session); err != nil {
+			if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup resources after PVC creation failure: %v", delErr)
+			}
+			m.cleanupSession(id)
+			return nil, fmt.Errorf("failed to create PVC: %w", err)
+		}
+		log.Printf("[K8S_SESSION] Created PVC %s for session %s", pvcName, id)
+	} else {
+		log.Printf("[K8S_SESSION] PVC disabled, using EmptyDir for session %s", id)
+	}
+
+	// Cache initial message as description
+	if req.InitialMessage != "" {
+		session.SetDescription(req.InitialMessage)
+	}
+
+	// Create webhook payload Secret if webhook payload is provided
+	if len(webhookPayload) > 0 {
+		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret: %v", err)
+			// Continue anyway - session will work without payload file
+		}
+	}
+
+	// Ensure service account exists for team-scoped sessions (best-effort)
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
+		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to ensure service account for team %s: %v", req.TeamID, err)
+			// Continue anyway - session will work without service account
+		}
+	}
+
+	// Create oneshot settings Secret if oneshot is enabled
+	if req.Oneshot {
+		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret: %v", err)
+			// Continue anyway - session will work without oneshot hook
+		}
+	}
+
+	// Build session settings once for the provision request and restart Secret.
+	// When req.ProvisionSettings is provided (small-cluster / forwarding mode), use it
+	// directly instead of resolving secrets from this cluster.
+	var sessionSettings *sessionsettings.SessionSettings
+	if req.ProvisionSettings != nil {
+		sessionSettings = req.ProvisionSettings
+	} else {
+		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
+	}
+
+	session.SetProvisionSettings(sessionSettings)
+	// Persist restart settings before creating the provision request or workload.
+	// A Pod can be evicted at any point after the workload is created; waiting for
+	// the first provisioning cycle to finish leaves such a replacement unable to
+	// auto-provision itself.
+	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after settings secret creation failure: %v", delErr)
+		}
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
+	}
+	if err := m.CreateProvisionRequest(ctx, session); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after provision request creation failure: %v", delErr)
+		}
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create provision request: %w", err)
+	}
+
+	// Create workload. PVC-backed sessions use a Deployment for restart recovery;
+	// ephemeral EmptyDir sessions use a Pod with restartPolicy=Never.
+	if err := m.createSessionWorkload(ctx, session, req); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after workload creation failure: %v", delErr)
+		}
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create session workload: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Created workload %s for session %s", deploymentName, id)
+
+	// Start watching session in background
+	go m.watchSession(sessionCtx, session)
+
+	// Log session start
+	repository := ""
+	if req.RepoInfo != nil {
+		repository = req.RepoInfo.FullName
+	}
+	if err := m.logger.LogSessionStart(id, repository); err != nil {
+		log.Printf("[K8S_SESSION] Failed to log session start: %v", err)
+	}
+
+	// Invalidate session-list cache so the new session appears immediately in
+	// every label-selector scoped list it belongs to.
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after create: %v", err)
+		}
+	}
+
+	log.Printf("[K8S_SESSION] Session %s created successfully", id)
+	return session, nil
+}
+
+// CreateStockSession creates a pre-warmed stock session (Deployment + Service)
+// without creating a provision request. The pod starts agent-provisioner and
+// waits for adoption, at which point adoptStockSession creates the request.
+// Note: Sandbox (network filter) and scia sidecar are always enabled.
+func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind bool) error {
+	id := uuid.New().String()
+	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
+
+	_, cancel := context.WithCancel(context.Background())
+
+	// Stock sessions have no owner; the minimal request holds pod capabilities only.
+	// Sandbox is always enabled; only DinD is configurable.
+	minimalReq := &entities.RunServerRequest{
+		Sandbox: stockSandboxParams(),
+	}
+	if dind {
+		minimalReq.Docker = &entities.DockerParams{Enabled: true}
+	}
+
+	session := NewKubernetesSession(id, minimalReq, deploymentName, serviceName, pvcName,
+		m.namespace, m.k8sConfig.BasePort, cancel, nil)
+	session.SetIsStock(true)
+
+	// Create the Service first so stock resources can reference it as owner.
+	// Keep it out of the available stock pool until the workload is created.
+	stockLabels := m.buildLabels(session)
+	stockLabels["agentapi.proxy/stock"] = "creating"
+	if err := m.createServiceWithLabels(ctx, session, stockLabels); err != nil {
+		cancel()
+		return fmt.Errorf("failed to create stock service: %w", err)
+	}
+
+	// Create PVC if enabled (required for Deployment volume mounts).
+	if m.isPVCEnabled() {
+		if err := m.createPVC(ctx, session); err != nil {
+			if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup resources after stock PVC creation failure: %v", delErr)
+			}
+			cancel()
+			return fmt.Errorf("failed to create stock PVC: %w", err)
+		}
+	}
+
+	if err := m.createSessionWorkload(ctx, session, minimalReq); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload creation failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("failed to create stock workload: %w", err)
+	}
+
+	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("failed to get stock service: %w", err)
+	}
+	stockSvc.Labels["agentapi.proxy/stock"] = "true"
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, stockSvc, metav1.UpdateOptions{}); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("failed to mark stock service ready: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
+		id, dind)
+	return nil
+}
+
+// CountStockSessions returns the number of available (not being deleted) stock sessions.
+// Note: Sandbox (network filter) is always enabled, so only DinD capability is queried.
+func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind bool) (int, error) {
+	// Sandbox is always enabled (capability-sandbox=true)
+	selector := fmt.Sprintf(
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		dind,
+	)
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list stock services: %w", err)
+	}
+	count := 0
+	for i := range svcs.Items {
+		if svcs.Items[i].DeletionTimestamp == nil {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
+// Deployment, PVC). Called by the stock inventory worker on startup to ensure
+// that stale pods built from an old image are replaced with fresh ones.
+// This also purges sessions stuck in the "claiming" state (stock=claiming) that
+// were abandoned mid-adoption due to a crash or restart.
+func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	// Use a set-based selector to match both stock=true (unclaimed) and
+	// stock=claiming (abandoned mid-adoption). Collect session IDs from every
+	// resource kind so a previous partial purge cannot leave orphaned stock
+	// Deployments/PVCs behind.
+	selector := "agentapi.proxy/stock in (true, claiming, creating),app.kubernetes.io/managed-by=agentapi-proxy"
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock services for purge: %w", err)
+	}
+	allSessionSvcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session services for purge protection: %w", err)
+	}
+	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock deployments for purge: %w", err)
+	}
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock pods for purge: %w", err)
+	}
+	pvcs, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock pvcs for purge: %w", err)
+	}
+
+	deletePolicy := metav1.DeletePropagationForeground
+	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
+
+	var purgeErrs []string
+	sessionIDs := make(map[string]struct{})
+	adoptedSessionIDs := make(map[string]struct{})
+	for i := range allSessionSvcs.Items {
+		svc := &allSessionSvcs.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" || svc.DeletionTimestamp != nil {
+			continue
+		}
+		stockState := svc.Labels["agentapi.proxy/stock"]
+		if stockState != "true" && stockState != "claiming" {
+			adoptedSessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID != "" {
+			sessionIDs[sessionID] = struct{}{}
+		}
+
+		// Delete Service
+		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
+		}
+	}
+	for i := range deployments.Items {
+		if sessionID := deployments.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale deployment label)", sessionID)
+				continue
+			}
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for i := range pods.Items {
+		if sessionID := pods.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pod label)", sessionID)
+				continue
+			}
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for i := range pvcs.Items {
+		if sessionID := pvcs.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pvc label)", sessionID)
+				continue
+			}
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
+
+	for sessionID := range sessionIDs {
+		log.Printf("[STOCK_INVENTORY] Purging stock session %s", sessionID)
+
+		// Delete workload. Try both workload kinds so stock sessions created
+		// before a PVC setting change are also purged.
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, workloadName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("deployment %s: %v", workloadName, err))
+		}
+		if err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, workloadName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("pod %s: %v", workloadName, err))
+		}
+
+		// Delete PVC if present. This intentionally does not depend on the
+		// current PVC setting because stale stock PVCs can remain after toggling
+		// PVC support off.
+		pvcName := fmt.Sprintf("agentapi-session-%s-pvc", sessionID)
+		if err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, pvcName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("pvc %s: %v", pvcName, err))
+		}
+	}
+
+	if len(purgeErrs) > 0 {
+		return fmt.Errorf("purge errors: %s", strings.Join(purgeErrs, "; "))
+	}
+	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(sessionIDs))
+	return nil
+}
+
+// findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
+// oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
+// warmed up the longest and are the most ready to serve.
+// Returns (nil, nil) when no stock is available.
+// Note: Sandbox (network filter) is always enabled, so only DinD is queried.
+func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements coreallocation.Requirements) (*corev1.Service, error) {
+	// Sandbox is always enabled (capability-sandbox=true)
+	selector := fmt.Sprintf(
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		requirements.DinD,
+	)
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list stock services: %w", err)
+	}
+
+	// Sort by creation time ascending so the oldest (longest-warmed) session is preferred.
+	sort.Slice(svcs.Items, func(i, j int) bool {
+		return svcs.Items[i].CreationTimestamp.Before(&svcs.Items[j].CreationTimestamp)
+	})
+
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		if svc.DeletionTimestamp != nil {
+			continue
+		}
+		if svc.Labels["agentapi.proxy/session-id"] == "" {
+			continue
+		}
+		return svc, nil
+	}
+	return nil, nil
+}
+
+// claimStockService atomically claims a stock Service by transitioning the
+// agentapi.proxy/stock label from "true" → "claiming" via an Update (which uses
+// Kubernetes' resourceVersion-based optimistic locking).
+// Using "claiming" instead of deleting the label ensures that ListSessions
+// (which excludes any Service with the agentapi.proxy/stock key) never restores
+// this Service with an empty user-id during the adoption window, preventing 403
+// errors and ghost-session appearances on other proxy replicas.
+// If another replica claims the same stock concurrently, the Update returns a
+// Conflict error and the caller should fall back to creating a new session.
+func (m *KubernetesSessionManager) claimStockService(ctx context.Context, svc *corev1.Service) (*corev1.Service, error) {
+	if svc.Labels["agentapi.proxy/stock"] != "true" {
+		return nil, fmt.Errorf("service %s is not a stock service", svc.Name)
+	}
+	// Transition to "claiming" so findStockSession (which filters stock=true) no
+	// longer picks it up, while ListSessions (which requires !agentapi.proxy/stock)
+	// also skips it until adoptStockSession removes the label entirely.
+	svc.Labels["agentapi.proxy/stock"] = "claiming"
+	// Update uses the ResourceVersion already set on svc for optimistic locking.
+	updated, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim stock service %s: %w", svc.Name, err)
+	}
+	return updated, nil
+}
+
+// adoptStockSession takes a claimed stock Service and turns it into a regular session.
+// It updates Service/Deployment labels and annotations, builds the provision payload,
+// and starts watchStockSession in the background.
+func (m *KubernetesSessionManager) adoptStockSession(
+	ctx context.Context,
+	req *entities.RunServerRequest,
+	webhookPayload []byte,
+	stockSvc *corev1.Service,
+) (entities.Session, error) {
+	stockID := stockSvc.Labels["agentapi.proxy/session-id"]
+	deploymentName := fmt.Sprintf("agentapi-session-%s", stockID)
+	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", stockID)
+
+	sessionCtx, cancel := context.WithCancel(context.Background())
+
+	// Build KubernetesSession reusing the stock's resource names.
+	session := NewKubernetesSession(
+		stockID,
+		req,
+		deploymentName,
+		stockSvc.Name, // service name stays the same
+		pvcName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+		cancel,
+		webhookPayload,
+	)
+
+	// Cache initial message as description.
+	if req.InitialMessage != "" {
+		session.SetDescription(req.InitialMessage)
+	}
+
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
+	// Register session in memory.
+	m.mutex.Lock()
+	m.sessions[stockID] = session
+	m.mutex.Unlock()
+
+	log.Printf("[K8S_SESSION] Adopting stock session %s in namespace %s", stockID, m.namespace)
+
+	effectiveSandbox := m.resolveSandboxParams(ctx, req)
+	if err := applySandboxPolicyToProvisioner(ctx, stockSvc, effectiveSandbox); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup stock session after sandbox policy error: %v", delErr)
+		}
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to apply sandbox policy to stock session: %w", err)
+	}
+
+	// Check whether the stock already has a PVC; if not, we leave it as EmptyDir.
+	_, pvcErr := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	switch {
+	case pvcErr == nil:
+		log.Printf("[K8S_SESSION] Stock session %s has existing PVC %s, reusing it", stockID, pvcName)
+		if currentPVC, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
+			currentPVC.OwnerReferences = m.sessionServiceOwnerReferences(ctx, stockID)
+			if _, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Update(ctx, currentPVC, metav1.UpdateOptions{}); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to update stock PVC owner reference for session %s: %v", stockID, err)
+			}
+		}
+	case errors.IsNotFound(pvcErr):
+		log.Printf("[K8S_SESSION] Stock session %s has no PVC, using EmptyDir", stockID)
+	default:
+		log.Printf("[K8S_SESSION] Warning: failed to check PVC for stock session %s: %v", stockID, pvcErr)
+	}
+
+	// Create webhook payload Secret if provided.
+	if len(webhookPayload) > 0 {
+		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret for stock session %s: %v", stockID, err)
+		}
+	}
+
+	// Ensure service account for team-scoped sessions (best-effort).
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
+		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to ensure service account for team %s: %v", req.TeamID, err)
+		}
+	}
+
+	// Create oneshot settings Secret if needed.
+	if req.Oneshot {
+		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret for stock session %s: %v", stockID, err)
+		}
+	}
+
+	// Build session settings and create a provision request for the adopted pod.
+	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
+	session.SetProvisionSettings(sessionSettings)
+	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to create session settings secret for stock session: %w", err)
+	}
+	if err := m.CreateProvisionRequest(ctx, session); err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to create provision request for stock session: %w", err)
+	}
+
+	// Update Service labels and annotations to reflect the new owner.
+	now := time.Now()
+	newLabels := m.buildLabels(session)
+	annotations := map[string]string{
+		"agentapi.proxy/created-at":      now.Format(time.RFC3339),
+		"agentapi.proxy/updated-at":      now.Format(time.RFC3339),
+		"agentapi.proxy/team-id":         req.TeamID,
+		"agentapi.proxy/last-message-at": now.UTC().Format(time.RFC3339),
+	}
+	if req.AgentType != "" {
+		annotations["agentapi.proxy/agent-type"] = req.AgentType
+	}
+	// Store initial message in annotation so all proxy replicas can read it immediately.
+	if req.InitialMessage != "" {
+		annotations["agentapi.proxy/initial-message"] = req.InitialMessage
+	}
+	if req.SessionTTL != "" {
+		annotations["agentapi.proxy/session-ttl"] = req.SessionTTL
+	}
+
+	currentSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, stockSvc.Name, metav1.GetOptions{})
+	if err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to get stock service for label update: %w", err)
+	}
+	currentSvc.Labels = newLabels
+	if currentSvc.Annotations == nil {
+		currentSvc.Annotations = make(map[string]string)
+	}
+	for k, v := range annotations {
+		currentSvc.Annotations[k] = v
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, currentSvc, metav1.UpdateOptions{}); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to update stock service labels for session %s: %v", stockID, err)
+	}
+
+	// Update workload metadata labels only to reflect the new owner.
+	// For Deployments, do not update spec.template.labels because that would
+	// trigger a rolling update while the provision request is being claimed.
+	if m.isPVCEnabled() {
+		currentDep, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+		if err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
+		} else {
+			currentDep.Labels = newLabels
+			currentDep.OwnerReferences = m.sessionServiceOwnerReferences(ctx, stockID)
+			if _, err := m.client.AppsV1().Deployments(m.namespace).Update(ctx, currentDep, metav1.UpdateOptions{}); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to update stock deployment labels for session %s: %v", stockID, err)
+			}
+		}
+	} else {
+		currentPod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+		if err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to get stock pod for label update: %v", err)
+		} else {
+			currentPod.Labels = newLabels
+			currentPod.OwnerReferences = m.sessionServiceOwnerReferences(ctx, stockID)
+			if _, err := m.client.CoreV1().Pods(m.namespace).Update(ctx, currentPod, metav1.UpdateOptions{}); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to update stock pod labels for session %s: %v", stockID, err)
+			}
+		}
+	}
+
+	// Start background watch. The Pod is already running and will claim the provision request.
+	go m.watchStockSession(sessionCtx, session)
+
+	// Log session start.
+	repository := ""
+	if req.RepoInfo != nil {
+		repository = req.RepoInfo.FullName
+	}
+	if err := m.logger.LogSessionStart(stockID, repository); err != nil {
+		log.Printf("[K8S_SESSION] Failed to log session start for stock session %s: %v", stockID, err)
+	}
+
+	// Invalidate session-list cache so the adopted stock session appears
+	// immediately in every label-selector scoped list it belongs to.
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after stock adopt: %v", err)
+		}
+	}
+
+	log.Printf("[K8S_SESSION] Stock session %s adopted successfully", stockID)
+	return session, nil
+}
+
+// watchStockSession monitors a stock-adopted session.
+// Unlike watchSession, it skips the ReadyReplicas wait (Pod is already running)
+// and waits for the pre-created Pod to claim its provision request.
+func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, session *KubernetesSession) {
+	defer func() {
+		log.Printf("[K8S_SESSION] Stock session %s watch ended", session.id)
+	}()
+
+	session.SetStatus("starting")
+
+	// Wait for the pod to be ready before waiting on its provision request.
+	// Although stock sessions are pre-warmed, the pod may not yet be ready if
+	// the session was adopted immediately after creation (e.g. inventory was
+	// just replenished). Reuse the same ready-wait loop used by watchSession.
+	timeout := time.After(time.Duration(m.k8sConfig.PodStartTimeout) * time.Second)
+	readyTicker := time.NewTicker(2 * time.Second)
+	podReady := false
+	for !podReady {
+		select {
+		case <-ctx.Done():
+			readyTicker.Stop()
+			log.Printf("[K8S_SESSION] Stock session %s context cancelled while waiting for pod", session.id)
+			return
+		case <-timeout:
+			readyTicker.Stop()
+			log.Printf("[K8S_SESSION] Stock session %s startup timeout", session.id)
+			session.SetStatus("timeout")
+			return
+		case <-readyTicker.C:
+			ready, err := m.isSessionWorkloadReady(context.Background(), session)
+			if err == nil && ready {
+				podReady = true
+			}
+		}
+	}
+	readyTicker.Stop()
+	log.Printf("[K8S_SESSION] Stock session %s: Pod is ready", session.id)
+
+	log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for stock session %s", session.id)
+	if err := m.waitForPullProvisioner(ctx, session); err != nil {
+		log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
+		session.SetStatus("error")
+		return
+	}
+
+	// Don't downgrade to "active" if watchAgentAPIStatus already detected the
+	// agent is running (e.g. provisioner's initial message is still in flight).
+	if session.Status() != "running" {
+		session.SetStatus("active")
+		log.Printf("[K8S_SESSION] Stock session %s is now active", session.id)
+	} else {
+		log.Printf("[K8S_SESSION] Stock session %s skipped SetStatus(active): agent already running", session.id)
+	}
+
+	// Continue watching deployment health and agentapi runtime status.
+	go m.watchAgentAPIStatus(ctx, session)
+	m.watchDeploymentStatus(ctx, session)
+}
+
+// GetSession returns a session by ID
+// If the session is not in memory, it attempts to restore from Kubernetes Service
+func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
+	// First, check memory
+	m.mutex.RLock()
+	session, exists := m.sessions[id]
+	m.mutex.RUnlock()
+
+	// Try to restore from Kubernetes Service to check for stale user-id even when
+	// the session is in memory.  A session cached while it was a stock pod will have
+	// an empty user-id; once the Service is updated with the real owner after
+	// adoption, we repair the in-memory entry here so authorization passes without
+	// requiring a proxy restart.
+	if exists && session.UserID() != "" {
+		return session
+	}
+
+	// Try to restore from Kubernetes Service
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(
+		context.Background(), serviceName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Failed to get service %s: %v", serviceName, err)
+		}
+		// If we can't reach K8s but have the session in memory, still return it
+		if exists {
+			return session
+		}
+		return nil
+	}
+
+	// Don't restore if Service is being deleted
+	if svc.DeletionTimestamp != nil {
+		if exists {
+			return session
+		}
+		return nil
+	}
+
+	// If session is already in memory but had a stale empty user-id, repair it
+	// from the Service labels instead of doing a full re-restore (which would
+	// start duplicate goroutines).
+	if exists && session.UserID() == "" {
+		if svcUserID := svc.Labels["agentapi.proxy/user-id"]; svcUserID != "" {
+			log.Printf("[K8S_SESSION] GetSession: repairing stale user-id for session %s (was empty, now %s)", id, svcUserID)
+			session.SetUserID(svcUserID)
+		}
+		return session
+	}
+
+	// Restore session from Service
+	restored := m.restoreSessionFromService(svc)
+	if restored == nil {
+		return nil
+	}
+
+	// Phase 2: overlay agentapi runtime status from Redis if available.
+	// The Kubernetes Deployment can only tell us "active" or "unhealthy".
+	// Redis may have a more precise runtime status (running/error/timeout).
+	if m.statusEventRepo != nil {
+		runtimeStatusOverrideFromRedis(m.statusEventRepo, restored)
+	}
+
+	return restored
+}
+
+// EnsureSessionWorkload lazily recreates a missing Pod/Deployment while the
+// canonical Service, settings Secret, snapshot, and (when enabled) PVC remain.
+// It is invoked by authenticated GET traffic to the session chat routes.
+func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id string) (entities.Session, bool, error) {
+	session := m.GetSession(id)
+	if session == nil {
+		return nil, false, fmt.Errorf("session %s not found", id)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return session, false, nil
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("canonical service for session %s not found", id)
+		}
+		return session, false, fmt.Errorf("get canonical service: %w", err)
+	}
+	readyEndpoint, err := m.sessionHasReadyEndpoint(ctx, ks.ServiceName())
+	if err != nil {
+		return session, false, err
+	}
+	if session.Status() == "suspended" {
+		// EndpointSlice/Endpoints updates can lag behind workload deletion. The
+		// persisted suspended state is authoritative during that window.
+		readyEndpoint = false
+	}
+
+	if m.isPVCEnabled() {
+		_, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, ks.DeploymentName(), metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if readyEndpoint {
+				return session, false, nil
+			}
+			ks.SetStatus("starting")
+			return session, true, nil
+		case !errors.IsNotFound(err):
+			return session, false, fmt.Errorf("get deployment: %w", err)
+		}
+		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
+			return session, false, err
+		}
+		if err := m.clearSessionSuspendState(ctx, ks.ServiceName()); err != nil {
+			return session, false, err
+		}
+		if err := m.createDeployment(ctx, ks, ks.Request()); err != nil && !errors.IsAlreadyExists(err) {
+			return session, false, fmt.Errorf("recreate deployment: %w", err)
+		}
+	} else {
+		_, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, ks.DeploymentName(), metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if readyEndpoint {
+				return session, false, nil
+			}
+			ks.SetStatus("starting")
+			return session, true, nil
+		case !errors.IsNotFound(err):
+			return session, false, fmt.Errorf("get pod: %w", err)
+		}
+		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
+			return session, false, err
+		}
+		if err := m.clearSessionSuspendState(ctx, ks.ServiceName()); err != nil {
+			return session, false, err
+		}
+		if err := m.createPod(ctx, ks, ks.Request()); err != nil && !errors.IsAlreadyExists(err) {
+			return session, false, fmt.Errorf("recreate pod: %w", err)
+		}
+	}
+
+	ks.SetStatus("starting")
+	log.Printf("[K8S_SESSION] Lazily recreated workload for session %s after chat access", id)
+	go m.watchAgentAPIStatus(context.Background(), ks)
+	go m.watchDeploymentStatus(context.Background(), ks)
+	go m.scheduleSuspendWhenRestoredWorkloadReady(ks)
+	return session, true, nil
+}
+
+func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
+	timeout := time.Duration(m.k8sConfig.PodStartTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		ready, err := m.isSessionWorkloadReady(ctx, session)
+		if err == nil && ready {
+			if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+				log.Printf("[K8S_SESSION] Failed to schedule post-resume suspend for session %s: %v", session.ID(), err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			log.Printf("[K8S_SESSION] Timed out waiting to schedule post-resume suspend for session %s", session.ID())
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *KubernetesSessionManager) clearSessionSuspendState(ctx context.Context, serviceName string) error {
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":null}}}`, sessionSuspendAtAnnotation, sessionSuspendedAtAnnotation))
+	if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, serviceName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("clear suspend state: %w", err)
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) requireSessionSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+		return fmt.Errorf("get restart settings secret %s: %w", name, err)
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) sessionHasReadyEndpoint(ctx context.Context, serviceName string) (bool, error) {
+	endpoints, err := m.client.CoreV1().Endpoints(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get session endpoints: %w", err)
+	}
+	for _, subset := range endpoints.Subsets {
+		if len(subset.Addresses) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// runtimeStatusOverrideFromRedis reads the latest agentapi runtime status from
+// Redis and, when it is more informative than the current in-memory status,
+// applies it to the session via SetStatusSilent so no additional broadcast is
+// triggered (the broadcasting pod already did that).
+//
+// The "infrastructure" statuses (creating, starting, unhealthy, stopped,
+// unknown) are authoritative from Kubernetes and are never overridden by Redis.
+func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, session entities.Session) {
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return
+	}
+	// Infrastructure statuses must not be overridden.
+	currentStatus := ks.Status()
+	switch currentStatus {
+	case "creating", "starting", "unhealthy", "stopped", "unknown":
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	redisStatus, _, err := repo.GetStatus(ctx, ks.ID())
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to read Redis status for session=%s: %v", ks.ID(), err)
+		return
+	}
+	if redisStatus == "" {
+		return // No Redis entry; keep Kubernetes-derived status.
+	}
+
+	// Only replace with more-specific runtime statuses.
+	switch redisStatus {
+	case "running", "active", "error", "timeout":
+		if redisStatus != currentStatus {
+			log.Printf("[K8S_SESSION] Overlaying Redis runtime status session=%s %s→%s",
+				ks.ID(), currentStatus, redisStatus)
+			ks.SetStatusSilent(redisStatus)
+		}
+	}
+}
+
+// ListSessions returns all sessions matching the filter.
+// Sessions are retrieved from a Redis cache when available, falling back to
+// Kubernetes API calls on a cache miss.  The cache is keyed by the label
+// selector (which encodes user-id, scope and team-id) so each filter
+// combination has its own independent cache entry.
+func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
+	labelSelector := m.buildLabelSelector(filter)
+	ctx := context.Background()
+
+	// --- cache-first path ---------------------------------------------------
+	if m.sessionListCacheRepo != nil {
+		cacheKey := m.buildSessionListCacheKey(labelSelector)
+		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
+			sessions := m.filterSessionsFromCache(cached, filter)
+			return m.withSessionAllocations(ctx, sessions, filter)
+		}
+	}
+
+	// --- cache miss: fetch from Kubernetes ----------------------------------
+	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
+	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
+
+	// Populate the cache with the full result set (before in-memory filters)
+	// so that different filter combinations that share the same labelSelector
+	// can reuse the same cached K8s data.
+	// Do not cache a pre-Service snapshot while allocation requests are still
+	// present. Otherwise /search can serve an empty stale cache after the
+	// allocation Secret is deleted and before the next cache miss observes the
+	// newly-created Service.
+	if m.sessionListCacheRepo != nil && len(allocationSessions) == 0 {
+		cacheKey := m.buildSessionListCacheKey(labelSelector)
+		dtos := sessionsToCacheDTOs(allSessions)
+		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to populate session list cache: %v", err)
+		}
+	}
+
+	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
+}
+
+func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
+	return mergeSessionAllocations(sessions, m.fetchSessionAllocationsFromK8s(ctx, filter))
+}
+
+func mergeSessionAllocations(sessions []entities.Session, allocationSessions []entities.Session) []entities.Session {
+	if len(allocationSessions) == 0 {
+		return sessions
+	}
+	seen := make(map[string]struct{}, len(sessions))
+	for _, session := range sessions {
+		seen[session.ID()] = struct{}{}
+	}
+	for _, session := range allocationSessions {
+		if _, ok := seen[session.ID()]; ok {
+			continue
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
+func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
+	if m.sessionListCacheRepo == nil {
+		return
+	}
+	if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after %s: %v", reason, err)
+	}
+}
+
+func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {
+	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating)",
+	})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list session allocations: %v", err)
+		return nil
+	}
+
+	sessions := make([]entities.Session, 0, len(secrets.Items))
+	for i := range secrets.Items {
+		sec := &secrets.Items[i]
+		if sec.DeletionTimestamp != nil {
+			continue
+		}
+		data := sec.Data[sessionAllocationDataKey]
+		if len(data) == 0 {
+			continue
+		}
+		var allocation coreallocation.AllocationRequest
+		if err := json.Unmarshal(data, &allocation); err != nil {
+			log.Printf("[K8S_SESSION] Failed to decode session allocation %s: %v", sec.Name, err)
+			continue
+		}
+		if allocation.SessionID == "" || allocation.Request == nil {
+			continue
+		}
+		scope := allocation.Request.Scope
+		if scope == "" {
+			scope = entities.ScopeUser
+		}
+		session := entities.NewProxySessionWithStatus(
+			allocation.SessionID,
+			allocation.Request.UserID,
+			scope,
+			allocation.Request.TeamID,
+			allocation.Request.Tags,
+			allocation.UpdatedAt,
+			string(allocation.Status),
+		)
+		if len(m.applySessionListFilters([]entities.Session{session}, filter)) == 0 {
+			continue
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
+// redisSessionListCacheTTL is the TTL passed to the cache repository.
+// Extended from 15s to 60s to reduce Kubernetes API calls while still ensuring
+// reasonable freshness for session list queries.
+const redisSessionListCacheTTL = 60 * time.Second
+
+// buildSessionListCacheKey returns a stable Redis cache key for the given
+// (namespace, labelSelector) combination.
+func (m *KubernetesSessionManager) buildSessionListCacheKey(labelSelector string) string {
+	h := sha256.Sum256([]byte(m.namespace + "|" + labelSelector))
+	return "agentapi:sessions:list:" + m.namespace + ":" + hex.EncodeToString(h[:8])
+}
+
+// fetchSessionsFromK8s performs the Kubernetes Services + workload list
+// calls and returns all sessions that match the label selector.
+// In-memory-only filters (status, teamIDs, tags) are NOT applied here so
+// the caller can cache the full result and reuse it across filter variants.
+func (m *KubernetesSessionManager) fetchSessionsFromK8s(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
+	services, err := m.client.CoreV1().Services(m.namespace).List(
+		ctx,
+		metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list services: %v", err)
+		return []entities.Session{}
+	}
+
+	deploymentMap := make(map[string]*appsv1.Deployment)
+	podMap := make(map[string]*corev1.Pod)
+	if m.isPVCEnabled() {
+		// Batch fetch deployments once to avoid N+1 API calls.
+		deployments, err := m.client.AppsV1().Deployments(m.namespace).List(
+			ctx,
+			metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			log.Printf("[K8S_SESSION] Failed to list deployments: %v", err)
+			// Continue without workload info – sessions will have "stopped" status.
+		}
+		if deployments != nil {
+			for i := range deployments.Items {
+				dep := &deployments.Items[i]
+				if sid := dep.Labels["agentapi.proxy/session-id"]; sid != "" {
+					deploymentMap[sid] = dep
+				}
+			}
+		}
+	} else {
+		pods, err := m.client.CoreV1().Pods(m.namespace).List(
+			ctx,
+			metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			log.Printf("[K8S_SESSION] Failed to list pods: %v", err)
+		}
+		if pods != nil {
+			for i := range pods.Items {
+				pod := &pods.Items[i]
+				if sid := pod.Labels["agentapi.proxy/session-id"]; sid != "" {
+					podMap[sid] = pod
+				}
+			}
+		}
+	}
+
+	var result []entities.Session
+	for i := range services.Items {
+		svc := &services.Items[i]
+		if svc.DeletionTimestamp != nil {
+			continue
+		}
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			continue
+		}
+		userID := svc.Labels["agentapi.proxy/user-id"]
+		if filter.UserID != "" && userID != filter.UserID {
+			continue
+		}
+		session := m.getOrRestoreSessionWithWorkload(svc, deploymentMap[sessionID], podMap[sessionID])
+		if session == nil {
+			continue
+		}
+		result = append(result, session)
+	}
+	return result
+}
+
+// applySessionListFilters applies the in-memory-only parts of filter to
+// sessions and returns the matching subset.
+func (m *KubernetesSessionManager) applySessionListFilters(sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
+	var result []entities.Session
+	for _, session := range sessions {
+		if filter.Status != "" && session.Status() != filter.Status {
+			continue
+		}
+		if filter.Scope != "" && session.Scope() != filter.Scope {
+			continue
+		}
+		if filter.TeamID != "" && session.TeamID() != filter.TeamID {
+			continue
+		}
+		if len(filter.TeamIDs) > 0 && session.Scope() == entities.ScopeTeam {
+			teamMatch := false
+			for _, tid := range filter.TeamIDs {
+				if session.TeamID() == tid {
+					teamMatch = true
+					break
+				}
+			}
+			if !teamMatch {
+				continue
+			}
+		}
+		if len(filter.Tags) > 0 {
+			matchAll := true
+			sessionTags := session.Tags()
+			for k, v := range filter.Tags {
+				sv, exists := sessionTags[k]
+				if !exists || sanitizeLabelValue(sv) != sanitizeLabelValue(v) {
+					matchAll = false
+					break
+				}
+			}
+			if !matchAll {
+				continue
+			}
+		}
+		result = append(result, session)
+	}
+	return result
+}
+
+// filterSessionsFromCache reconstructs sessions from cached DTOs – preferring
+// the live in-memory session where available (for up-to-date status) – and
+// then applies the in-memory-only filters.
+func (m *KubernetesSessionManager) filterSessionsFromCache(dtos []portrepos.CachedSessionDTO, filter entities.SessionFilter) []entities.Session {
+	// Snapshot the live sessions map once to avoid repeated lock acquisitions.
+	m.mutex.RLock()
+	live := make(map[string]*KubernetesSession, len(m.sessions))
+	for id, s := range m.sessions {
+		live[id] = s
+	}
+	m.mutex.RUnlock()
+
+	sessions := make([]entities.Session, 0, len(dtos))
+	for _, dto := range dtos {
+		if filter.UserID != "" && dto.UserID != filter.UserID {
+			continue
+		}
+		var s entities.Session
+		if ls, ok := live[dto.ID]; ok {
+			ls.SetAnnotations(dto.Annotations)
+			s = ls // use live in-memory session for current status
+		} else {
+			s = newCachedSession(dto)
+		}
+		sessions = append(sessions, s)
+	}
+
+	return m.applySessionListFilters(sessions, filter)
+}
+
+// sessionsToCacheDTOs converts a slice of entities.Session to cache DTOs.
+// Only fields present on the entities.Session interface are available here;
+// extra KubernetesSession fields (deploymentName, serviceName) are captured
+// via a type assertion when possible.
+func sessionsToCacheDTOs(sessions []entities.Session) []portrepos.CachedSessionDTO {
+	dtos := make([]portrepos.CachedSessionDTO, 0, len(sessions))
+	for _, s := range sessions {
+		dto := portrepos.CachedSessionDTO{
+			ID:            s.ID(),
+			UserID:        s.UserID(),
+			Scope:         string(s.Scope()),
+			TeamID:        s.TeamID(),
+			Tags:          s.Tags(),
+			Status:        s.Status(),
+			StartedAt:     s.StartedAt(),
+			UpdatedAt:     s.UpdatedAt(),
+			LastMessageAt: s.LastMessageAt(),
+			Description:   s.Description(),
+			Annotations:   sessionAnnotations(s),
+		}
+		// Capture Kubernetes-specific fields when available.
+		if ks, ok := s.(*KubernetesSession); ok {
+			dto.ServicePort = ks.servicePort
+			dto.Namespace = ks.namespace
+			dto.DeploymentName = ks.deploymentName
+			dto.ServiceName = ks.serviceName
+			if ks.request != nil {
+				dto.InitialMessage = ks.request.InitialMessage
+			}
+			dto.IsStock = ks.isStock
+		}
+		dtos = append(dtos, dto)
+	}
+	return dtos
+}
+
+type sessionAnnotationsProvider interface {
+	Annotations() entities.SessionAnnotations
+}
+
+func sessionAnnotations(s entities.Session) entities.SessionAnnotations {
+	if annotated, ok := s.(sessionAnnotationsProvider); ok {
+		return annotated.Annotations()
+	}
+	return entities.SessionAnnotations{}
+}
+
+// getOrRestoreSessionWithWorkload gets a session from memory or restores it from Service
+// using a pre-fetched workload to avoid additional API calls.
+func (m *KubernetesSessionManager) getOrRestoreSessionWithWorkload(svc *corev1.Service, deployment *appsv1.Deployment, pod *corev1.Pod) *KubernetesSession {
+	// Don't restore if Service is being deleted (same guard as GetSession)
+	if svc.DeletionTimestamp != nil {
+		return nil
+	}
+
+	sessionID := svc.Labels["agentapi.proxy/session-id"]
+
+	// Check if session exists in memory
+	m.mutex.RLock()
+	session, exists := m.sessions[sessionID]
+	m.mutex.RUnlock()
+
+	if exists {
+		session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
+		// If the in-memory session was cached when this Service was still a stock
+		// session (user-id was empty at restore time), and the Service now has a
+		// real owner, repair the user-id in-place so authorization checks pass.
+		// This avoids the need for a proxy restart to recover from the race where
+		// another replica restored the session before stock adoption completed.
+		if session.UserID() == "" {
+			if svcUserID := svc.Labels["agentapi.proxy/user-id"]; svcUserID != "" {
+				log.Printf("[K8S_SESSION] Repairing stale user-id for session %s (was empty, now %s)", sessionID, svcUserID)
+				session.SetUserID(svcUserID)
+			}
+		}
+		return session
+	}
+
+	// Restore session from Service with pre-fetched workload
+	return m.restoreSessionFromServiceWithWorkload(svc, deployment, pod)
+}
+
+// DeleteSession stops and removes a session
+// If the session is not in memory, it attempts to restore from Kubernetes Service first
+func (m *KubernetesSessionManager) DeleteSession(id string) error {
+	// First, check memory
+	m.mutex.RLock()
+	session, exists := m.sessions[id]
+	m.mutex.RUnlock()
+
+	// If not in memory, try to get from GetSession (which will restore from Service)
+	if !exists {
+		if restored := m.GetSession(id); restored != nil {
+			m.mutex.RLock()
+			session, exists = m.sessions[id]
+			m.mutex.RUnlock()
+		}
+	}
+
+	if !exists || session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	log.Printf("[K8S_SESSION] Deleting session %s", id)
+
+	// Invoke registered handlers BEFORE cancelling the context or removing Kubernetes resources.
+	// At this point the session's Service endpoint is still reachable (e.g. for GetMessages).
+	m.handlersMutex.RLock()
+	handlers := make([]SessionDeletedHandler, len(m.onSessionDeletedHandlers))
+	copy(handlers, m.onSessionDeletedHandlers)
+	m.handlersMutex.RUnlock()
+
+	if len(handlers) > 0 {
+		handlerCtx, handlerCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer handlerCancel()
+		for _, h := range handlers {
+			h(handlerCtx, session)
+		}
+	}
+
+	// Cancel context to trigger cleanup
+	if session != nil {
+		session.Cancel()
+	}
+
+	// Delete Kubernetes resources
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(m.k8sConfig.PodStopTimeout)*time.Second)
+	defer cancel()
+
+	if err := m.deleteSessionResources(ctx, session); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to delete session resources: %v", err)
+	}
+
+	// Remove session from map
+	m.cleanupSession(id)
+
+	// Clean up Redis status key.
+	if m.statusEventRepo != nil {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer delCancel()
+		if err := m.statusEventRepo.DeleteStatus(delCtx, id); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to delete Redis status for session=%s: %v", id, err)
+		}
+	}
+
+	// Remove the deleted session from cache instead of invalidating all entries.
+	// This is more efficient and preserves cache hits for other sessions.
+	if m.sessionListCacheRepo != nil {
+		invCtx, invCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer invCancel()
+		if err := m.sessionListCacheRepo.DeleteSessionFromCache(invCtx, m.namespace, id, redisSessionListCacheTTL); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to delete session from cache: %v", err)
+		}
+	}
+
+	// Log session end
+	if err := m.logger.LogSessionEnd(id, 0); err != nil {
+		log.Printf("[K8S_SESSION] Failed to log session end: %v", err)
+	}
+
+	log.Printf("[K8S_SESSION] Session %s deleted successfully", id)
+	return nil
+}
+
+// Shutdown gracefully stops all sessions
+// Note: This does NOT delete Kubernetes resources (Deployment, Service, PVC, Secret).
+// Resources are preserved so sessions can be restored when the proxy restarts.
+// Use DeleteSession to explicitly delete a session and its resources.
+func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
+	if m.suspendCancel != nil {
+		m.suspendCancel()
+	}
+	m.mutex.Lock()
+	sessionCount := len(m.sessions)
+	// Clear in-memory sessions (resources remain in Kubernetes)
+	m.sessions = make(map[string]*KubernetesSession)
+	m.mutex.Unlock()
+
+	log.Printf("[K8S_SESSION] Shutting down, preserving %d session(s) in Kubernetes for recovery", sessionCount)
+	return nil
+}
+
+// SendMessage sends a message to an existing session.
+// For ACP sessions (claude-acp, codex-acp, pi-ollama, cursor) it uses the ACP JSON-RPC 2.0
+// POST /rpc endpoint with session/prompt; for standard agentapi sessions it
+// uses the agentapi-compatible POST /message endpoint.
+func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	status := session.Status()
+	if status != "active" && status != "starting" {
+		return fmt.Errorf("session is not active: status=%s", status)
+	}
+
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	agentType := ""
+	if ks, ok := session.(*KubernetesSession); ok {
+		if req := ks.Request(); req != nil {
+			agentType = req.AgentType
+		}
+	}
+	if agentType == "" {
+		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
+	}
+
+	var jsonData []byte
+	var postURL string
+	if isACPAgentType(agentType) {
+		// Fetch the ACP session ID from GET /session.
+		acpSessionID, err := m.getACPSessionIDFromPod(ctx, baseURL)
+		if err != nil {
+			return fmt.Errorf("failed to get ACP session ID: %w", err)
+		}
+		type contentBlock struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		type promptParams struct {
+			SessionId string         `json:"sessionId"`
+			Prompt    []contentBlock `json:"prompt"`
+		}
+		type rpcRequest struct {
+			JSONRPC string       `json:"jsonrpc"`
+			ID      int          `json:"id"`
+			Method  string       `json:"method"`
+			Params  promptParams `json:"params"`
+		}
+		payload := rpcRequest{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "session/prompt",
+			Params: promptParams{
+				SessionId: acpSessionID,
+				Prompt:    []contentBlock{{Type: "text", Text: message}},
+			},
+		}
+		jsonData, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal ACP payload: %w", err)
+		}
+		postURL = baseURL + "/rpc"
+	} else {
+		payload := map[string]interface{}{
+			"content": message,
+			"type":    "user",
+		}
+		var err error
+		jsonData, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal message payload: %w", err)
+		}
+		postURL = baseURL + "/message"
+	}
+
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		req, err := http.NewRequestWithContext(ctx, "POST", postURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create HTTP request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted) {
+			_ = resp.Body.Close()
+			now := time.Now()
+			if ks, ok := session.(*KubernetesSession); ok {
+				ks.SetLastMessageAt(now)
+			}
+			svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
+			if patchErr := m.patchLastMessageAt(context.Background(), svcName, now); patchErr != nil {
+				log.Printf("[K8S_SESSION] Failed to update last-message-at for session %s: %v", id, patchErr)
+			}
+			log.Printf("[K8S_SESSION] Successfully sent message to session %s (agentType=%q)", id, agentType)
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			_ = resp.Body.Close()
+		}
+		if i < 2 {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
+}
+
+// getACPSessionIDFromPod fetches the ACP session ID from the pod's GET /session endpoint.
+func (m *KubernetesSessionManager) getACPSessionIDFromPod(ctx context.Context, baseURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/session", nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body struct {
+		SessionId string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.SessionId == "" {
+		return "", fmt.Errorf("empty sessionId from /session")
+	}
+	return body.SessionId, nil
+}
+
+// StopAgent sends a stop/cancel signal to the running agent without deleting the session.
+// ACP-backed sessions use JSON-RPC session/cancel; agentapi-compatible sessions use
+// the POST /action stop_agent endpoint.
+func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	// Check session status
+	status := session.Status()
+	if status != "active" && status != "starting" {
+		return fmt.Errorf("session is not active: status=%s", status)
+	}
+
+	// Build service name and endpoint URL for the agentapi /action endpoint
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/action",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	agentType := ""
+	if ks, ok := session.(*KubernetesSession); ok {
+		if req := ks.Request(); req != nil {
+			agentType = req.AgentType
+		}
+	}
+	if agentType == "" {
+		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
+	}
+
+	var payload interface{}
+	if isACPAgentType(agentType) {
+		url = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/rpc",
+			serviceName,
+			m.namespace,
+			m.k8sConfig.BasePort,
+		)
+		payload = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  "session/cancel",
+			"params": map[string]string{
+				"sessionId": id,
+			},
+		}
+	} else {
+		payload = map[string]interface{}{
+			"type": "stop_agent",
+		}
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send stop_agent signal: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
+	}
+
+	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s (agentType=%q)", id, agentType)
+	return nil
+}
+
+func isACPAgentType(agentType string) bool {
+	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi-ollama" || agentType == "cursor"
+}
+
+func supportedAgentTypeOrDefault(agentType string) string {
+	switch agentType {
+	case "claude-acp", "codex-acp", "pi-ollama", "cursor":
+		return agentType
+	default:
+		return ""
+	}
+}
+
+func restoreAgentTypeFromService(svc *corev1.Service) string {
+	if svc == nil {
+		return ""
+	}
+	if agentType := svc.Annotations["agentapi.proxy/agent-type"]; agentType != "" {
+		return agentType
+	}
+	return svc.Labels["agentapi.proxy/agent-type"]
+}
+
+func (m *KubernetesSessionManager) getSessionAgentTypeFromService(ctx context.Context, serviceName string) string {
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Failed to get service %s for agent type fallback: %v", serviceName, err)
+		}
+		return ""
+	}
+	return restoreAgentTypeFromService(svc)
+}
+
+// GetMessages retrieves conversation history from a session
+func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return nil, fmt.Errorf("session not found: %s", id)
+	}
+
+	// Build service name and endpoint URL
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/messages",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Send request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Parse response
+	var response struct {
+		Messages []portrepos.Message `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Successfully retrieved %d messages from session %s", len(response.Messages), id)
+	return response.Messages, nil
+}
+
+// createPVC creates a PersistentVolumeClaim for the session
+func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *KubernetesSession) error {
+	storageSize := resource.MustParse(m.k8sConfig.PVCStorageSize)
+
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            session.PVCName(),
+			Namespace:       m.namespace,
+			Labels:          m.buildLabels(session),
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteOnce,
+			},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: storageSize,
+				},
+			},
+		},
+	}
+
+	// Set storage class if specified
+	if m.k8sConfig.PVCStorageClass != "" {
+		pvc.Spec.StorageClassName = &m.k8sConfig.PVCStorageClass
+	}
+
+	_, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Create(ctx, pvc, metav1.CreateOptions{})
+	return err
+}
+
+// createSessionWorkload creates the Kubernetes workload for the session.
+// PVC-backed sessions keep using a Deployment so they can recover from pod
+// restarts. Sessions without a PVC are intentionally ephemeral and run as a
+// single Pod with restartPolicy=Never.
+func (m *KubernetesSessionManager) createSessionWorkload(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
+	if m.isPVCEnabled() {
+		return m.createDeployment(ctx, session, req)
+	}
+	return m.createPod(ctx, session, req)
+}
+
+// createDeployment creates a Deployment for the session
+func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
+	deployment, err := m.buildDeployment(ctx, session, req)
+	if err != nil {
+		return err
+	}
+	_, err = m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
+	return err
+}
+
+// createPod creates a standalone Pod for an ephemeral session.
+func (m *KubernetesSessionManager) createPod(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
+	deployment, err := m.buildDeployment(ctx, session, req)
+	if err != nil {
+		return err
+	}
+	podTemplate := deployment.Spec.Template
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            session.DeploymentName(),
+			Namespace:       m.namespace,
+			Labels:          podTemplate.Labels,
+			Annotations:     podTemplate.Annotations,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
+		},
+		Spec: podTemplate.Spec,
+	}
+	pod.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+	_, err = m.client.CoreV1().Pods(m.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	return err
+}
+
+// buildDeployment builds the Deployment object used directly for PVC-backed
+// sessions and as a Pod template source for ephemeral sessions.
+func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) (*appsv1.Deployment, error) {
+	labels := m.buildLabels(session)
+	envVars := m.buildEnvVars(session, req)
+	replicas := int32(1)
+
+	// Parse resource requirements
+	cpuRequest := resource.MustParse(m.k8sConfig.CPURequest)
+	cpuLimit := resource.MustParse(m.k8sConfig.CPULimit)
+	memoryRequest := resource.MustParse(m.k8sConfig.MemoryRequest)
+	memoryLimit := resource.MustParse(m.k8sConfig.MemoryLimit)
+
+	// Build init containers and sandbox sidecar.
+	// Sandbox (network filter) is now always enabled - it cannot be opted out.
+	sandboxEnabled := true
+	// Ensure req.Sandbox has a valid value with default settings
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true}
+	} else {
+		req.Sandbox.Enabled = true
+	}
+	var initContainers []corev1.Container
+	var sandboxSidecar *corev1.Container
+	var sandboxEnvVars []corev1.EnvVar
+	effectiveSandbox := m.resolveSandboxParams(ctx, req)
+	initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
+
+	var sciaInitContainer *corev1.Container
+	var sciaSidecar *corev1.Container
+	if m.sciaSessionSidecarEnabled(req) {
+		var sciaUserToken string
+		if apiKey := m.ensurePersonalAPIKey(ctx, req.UserID); apiKey != nil {
+			sciaUserToken = apiKey.APIKey()
+		}
+		var sciaEnvVars []corev1.EnvVar
+		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
+		initContainers = append(initContainers, *sciaInitContainer)
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
+		// Route provisioner traffic through SCIA from startup. The actual agent gets
+		// the same route from SessionSettings after provisioning. Keep cluster
+		// services out of NO_PROXY so provisioner management calls are observed by
+		// SCIA before SCIA chains them through nfa.
+		sandboxEnvVars = provisionerSciaEnvVars(sciaEnvVars)
+	}
+
+	// Build DinD sidecar if Docker-in-Docker is enabled.
+	dindEnabled := req.Docker != nil && req.Docker.Enabled
+	var dindSidecar *corev1.Container
+	var dindEnvVars []corev1.EnvVar
+	var dindVolumes []corev1.Volume
+	if dindEnabled {
+		var dockerConfig *sessionsettings.DockerConfig
+		if req.Docker != nil {
+			registries := make([]sessionsettings.RegistryConfig, 0, len(req.Docker.Registries))
+			for _, r := range req.Docker.Registries {
+				registries = append(registries, sessionsettings.RegistryConfig{
+					Server:     r.Server,
+					Username:   r.Username,
+					Password:   r.Password,
+					SecretName: r.SecretName,
+					Insecure:   r.Insecure,
+				})
+			}
+			dockerConfig = &sessionsettings.DockerConfig{
+				Enabled:    true,
+				Registries: registries,
+			}
+		}
+		dindSidecar, dindEnvVars, dindVolumes = m.buildDinDContainers(dockerConfig)
+	}
+
+	// Determine working directory
+	// Always use /home/agentapi/workdir as base; clone-repo will create /home/agentapi/workdir/repo
+	// Setting workingDir to repo path would cause Kubernetes to pre-create the dir as root
+	workingDir := "/home/agentapi/workdir"
+
+	// Build envFrom for GitHub secrets
+	// Two secrets are used:
+	// - GitHubSecretName: Contains GITHUB_TOKEN, GITHUB_APP_PEM, GITHUB_APP_ID, GITHUB_INSTALLATION_ID (authentication)
+	// - GitHubConfigSecretName: Contains GITHUB_API, GITHUB_URL (configuration for Enterprise Server)
+	var envFrom []corev1.EnvFromSource
+
+	if req.GithubToken != "" {
+		// When params.github_token is provided:
+		// - GITHUB_TOKEN is embedded directly in session-settings env (no per-session secret)
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings only
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
+		}
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided:
+		// - Mount GitHubSecretName for full GitHub App authentication
+		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+
+		// Mount GitHub config Secret if available (for any additional config)
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+	}
+
+	// Build container spec.
+	// The container runs agent-provisioner, which serves local health/status
+	// endpoints and pulls provision requests from the proxy internal API.
+	container := corev1.Container{
+		Name:            "agentapi",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		WorkingDir:      workingDir,
+		Ports: []corev1.ContainerPort{
+			{
+				// agentapi port – available only after provisioning completes.
+				Name:          "http",
+				ContainerPort: int32(m.k8sConfig.BasePort),
+				Protocol:      corev1.ProtocolTCP,
+			},
+			{
+				// agent-provisioner port – available immediately on Pod start.
+				Name:          "provisioner",
+				ContainerPort: provisionerPort,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Env:     append(append(envVars, sandboxEnvVars...), dindEnvVars...),
+		EnvFrom: envFrom,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    cpuRequest,
+				corev1.ResourceMemory: memoryRequest,
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    cpuLimit,
+				corev1.ResourceMemory: memoryLimit,
+			},
+		},
+		VolumeMounts: m.buildMainContainerVolumeMounts(session, req),
+		// Run agent-provisioner instead of the inline shell setup+agentapi script.
+		Command: []string{"agentapi-proxy"},
+		Args:    []string{"agent-provisioner"},
+		// Probes target /healthz on the provisioner port (always-200) so that
+		// the pod becomes Ready as soon as agent-provisioner is listening.
+		// The proxy's watchSession goroutine handles waiting for the actual
+		// provisioning completion (GET /status → "ready").
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/healthz",
+					Port: intstr.FromInt(provisionerPort),
+				},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       5,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/healthz",
+					Port: intstr.FromInt(provisionerPort),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       2,
+		},
+	}
+
+	// Build volumes
+	volumes := m.buildVolumes(session)
+	if sandboxEnabled {
+		volumes = append(volumes, corev1.Volume{
+			Name: "sandbox-iptables",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+	if m.sciaSessionSidecarEnabled(req) {
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "scia-config",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+			corev1.Volume{
+				Name: "scia-mitm-ca",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		)
+	}
+	if dindEnabled {
+		volumes = append(volumes, dindVolumes...)
+	}
+
+	// Build containers list.
+	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
+	// (pkg/provisioner/provision.go) after user context is established, so the
+	// UserID is always set correctly even for stock pool pods.
+	containers := []corev1.Container{container}
+	if sandboxSidecar != nil {
+		containers = append(containers, *sandboxSidecar)
+	}
+	if sciaSidecar != nil {
+		containers = append(containers, *sciaSidecar)
+	}
+	if dindSidecar != nil {
+		containers = append(containers, *dindSidecar)
+	}
+
+	// Note: Initial message is now sent by agent-provisioner internally after agentapi
+	// becomes ready. The initial-message-sender sidecar has been removed.
+
+	// Note: The slack-integration sidecar (claude-posts) has been removed.
+	// claude-posts is now launched as a subprocess inside the agentapi container
+	// by agent-provisioner (pkg/provisioner/provision.go) after agentapi starts.
+	// This avoids running claude-posts twice when stock sessions are used.
+
+	// otelcol runs as a subprocess inside the agentapi container (in-process mode).
+	// No sidecar is added here; the provisioner starts otelcol after user context
+	// is established so that metrics labels are correct even with stock sessions.
+
+	// Convert config tolerations to corev1 tolerations
+	var tolerations []corev1.Toleration
+	for _, t := range m.k8sConfig.Tolerations {
+		toleration := corev1.Toleration{
+			Key:      t.Key,
+			Operator: corev1.TolerationOperator(t.Operator),
+			Value:    t.Value,
+			Effect:   corev1.TaintEffect(t.Effect),
+		}
+		if t.TolerationSeconds != nil {
+			toleration.TolerationSeconds = t.TolerationSeconds
+		}
+		tolerations = append(tolerations, toleration)
+	}
+
+	// Build pod annotations
+	podAnnotations := make(map[string]string)
+
+	// Add Prometheus scrape annotations for otelcol sidecar if enabled
+	if m.k8sConfig.OtelCollectorEnabled {
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+
+		podAnnotations["prometheus.io/scrape"] = "true"
+		podAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", exporterPort)
+		podAnnotations["prometheus.io/path"] = "/metrics"
+	}
+
+	affinity, err := sessionAffinity(m.k8sConfig.Affinity)
+	if err != nil {
+		return nil, err
+	}
+	sessionServiceAccount := m.k8sConfig.ServiceAccount
+	if sessionServiceAccount == "" {
+		sessionServiceAccount = "agentapi-proxy-session"
+	}
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            session.DeploymentName(),
+			Namespace:       m.namespace,
+			Labels:          labels,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"agentapi.proxy/session-id": session.id,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      labels,
+					Annotations: podAnnotations,
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: sessionServiceAccount,
+					RestartPolicy:      corev1.RestartPolicyAlways,
+					SecurityContext: &corev1.PodSecurityContext{
+						FSGroup:    int64Ptr(999),
+						RunAsUser:  int64Ptr(999),
+						RunAsGroup: int64Ptr(999),
+					},
+					InitContainers: initContainers,
+					Containers:     containers,
+					Volumes:        volumes,
+					NodeSelector:   m.k8sConfig.NodeSelector,
+					Affinity:       affinity,
+					Tolerations:    tolerations,
+				},
+			},
+		},
+	}
+	if err := m.applySessionPodTemplateFile(&deployment.Spec.Template); err != nil {
+		return nil, err
+	}
+	return deployment, nil
+}
+
+func provisionerSciaEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
+	result := make([]corev1.EnvVar, len(envVars))
+	copy(result, envVars)
+	for i := range result {
+		switch result[i].Name {
+		case "NO_PROXY", "no_proxy":
+			result[i].Value = "127.0.0.1,localhost"
+		case "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO":
+			// The combined bundle is created later by the provisioner. Use SCIA's
+			// generated CA directly during the initial pull phase.
+			result[i].Value = sciaCAPath
+		}
+	}
+	return result
+}
+
+func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
+	if len(value) == 0 {
+		return nil, nil
+	}
+	normalized, err := normalizeJSONValue(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize session affinity: %w", err)
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session affinity: %w", err)
+	}
+	var affinity corev1.Affinity
+	if err := json.Unmarshal(data, &affinity); err != nil {
+		return nil, fmt.Errorf("failed to parse session affinity: %w", err)
+	}
+	return &affinity, nil
+}
+
+func normalizeJSONValue(value interface{}) (interface{}, error) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		normalized := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			value, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[key] = value
+		}
+		return normalized, nil
+	case map[interface{}]interface{}:
+		normalized := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			stringKey, ok := key.(string)
+			if !ok {
+				return nil, fmt.Errorf("affinity map key must be a string, got %T", key)
+			}
+			value, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[stringKey] = value
+		}
+		return normalized, nil
+	case []interface{}:
+		normalized := make([]interface{}, len(typed))
+		for index, item := range typed {
+			value, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[index] = value
+		}
+		return normalized, nil
+	default:
+		return value, nil
+	}
+}
+
+func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.PodTemplateSpec) error {
+	if m.k8sConfig == nil || strings.TrimSpace(m.k8sConfig.SessionPodTemplateFile) == "" {
+		return nil
+	}
+
+	filename := strings.TrimSpace(m.k8sConfig.SessionPodTemplateFile)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read session pod template file %s: %w", filename, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+
+	originalJSON, err := json.Marshal(template)
+	if err != nil {
+		return fmt.Errorf("failed to marshal generated session pod template: %w", err)
+	}
+	patchJSON, err := yaml.YAMLToJSON(data)
+	if err != nil {
+		return fmt.Errorf("failed to parse session pod template file %s: %w", filename, err)
+	}
+	mergedJSON, err := strategicpatch.StrategicMergePatch(originalJSON, patchJSON, corev1.PodTemplateSpec{})
+	if err != nil {
+		return fmt.Errorf("failed to merge session pod template file %s: %w", filename, err)
+	}
+
+	generated := template.DeepCopy()
+	var merged corev1.PodTemplateSpec
+	if err := json.Unmarshal(mergedJSON, &merged); err != nil {
+		return fmt.Errorf("failed to decode merged session pod template: %w", err)
+	}
+	restoreSessionPodTemplateInvariants(&merged, generated)
+	*template = merged
+	log.Printf("[K8S_SESSION] Applied session pod template file: %s", filename)
+	return nil
+}
+
+func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, generated *corev1.PodTemplateSpec) {
+	if template.Labels == nil {
+		template.Labels = map[string]string{}
+	}
+	for key, value := range generated.Labels {
+		if strings.HasPrefix(key, "agentapi.proxy/") || key == "app.kubernetes.io/managed-by" {
+			template.Labels[key] = value
+		}
+	}
+
+	template.Spec.ServiceAccountName = generated.Spec.ServiceAccountName
+	template.Spec.RestartPolicy = generated.Spec.RestartPolicy
+
+	generatedMain := findContainerByName(generated.Spec.Containers, "agentapi")
+	if generatedMain == nil {
+		return
+	}
+	for i := range template.Spec.Containers {
+		if template.Spec.Containers[i].Name != "agentapi" {
+			continue
+		}
+		template.Spec.Containers[i].Image = generatedMain.Image
+		template.Spec.Containers[i].ImagePullPolicy = generatedMain.ImagePullPolicy
+		template.Spec.Containers[i].WorkingDir = generatedMain.WorkingDir
+		template.Spec.Containers[i].Command = generatedMain.Command
+		template.Spec.Containers[i].Args = generatedMain.Args
+		template.Spec.Containers[i].Ports = generatedMain.Ports
+		template.Spec.Containers[i].LivenessProbe = generatedMain.LivenessProbe
+		template.Spec.Containers[i].ReadinessProbe = generatedMain.ReadinessProbe
+		return
+	}
+	template.Spec.Containers = append([]corev1.Container{*generatedMain}, template.Spec.Containers...)
+}
+
+func findContainerByName(containers []corev1.Container, name string) *corev1.Container {
+	for i := range containers {
+		if containers[i].Name == name {
+			return &containers[i]
+		}
+	}
+	return nil
+}
+
+// NOTE: The credentialsSyncScript / credentialsSyncSidecarImage / buildCredentialsSyncSidecar
+// have been removed. Credentials sync is now handled as a goroutine inside agent-provisioner
+// (pkg/provisioner/provision.go) after user context is established. This ensures the
+// UserID is always available (stock pool pods have an empty UserID at pod creation time).
+
+// NOTE: The initialMessageSenderScript and buildInitialMessageSenderSidecar have been
+// removed. Initial message sending is now handled inside agent-provisioner
+// (pkg/provisioner/provision.go) after agentapi starts.
+
+// NOTE: buildSlackSidecar (claude-posts sidecar) has been removed.
+// claude-posts is launched as a subprocess inside the agentapi container by
+// agent-provisioner (pkg/provisioner/provision.go). Running it as a sidecar
+// caused duplicate execution alongside the in-process launch.
+
+// defaultSlackBotTokenSecretKey is the default key within the Secret that holds the Slack bot token
+const defaultSlackBotTokenSecretKey = "bot-token"
+
+// createWebhookPayloadSecret creates a Secret containing the webhook payload JSON
+func (m *KubernetesSessionManager) createWebhookPayloadSecret(
+	ctx context.Context,
+	session *KubernetesSession,
+	payload []byte,
+) error {
+	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            secretName,
+			Namespace:       m.namespace,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
+				"agentapi.proxy/resource":   "webhook-payload",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"payload.json": payload,
+		},
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create webhook payload secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created webhook payload Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
+// deleteWebhookPayloadSecret deletes the webhook payload Secret for a session
+func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete webhook payload secret: %w", err)
+	}
+	return nil
+}
+
+// getInitialMessageFromSecret retrieves the initial message from the session-settings Secret.
+// The initial message is stored as the "initial_message" field inside "settings.yaml".
+// serviceName follows the pattern "agentapi-session-{id}-svc"; the settings secret is "agentapi-session-{id}-settings".
+func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
+	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, settingsSecretName, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	yamlData, ok := secret.Data["settings.yaml"]
+	if !ok {
+		return ""
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(yamlData)
+	if err != nil {
+		return ""
+	}
+	return settings.InitialMessage
+}
+
+// getSessionMetaFromSecret reads the settings secret and returns the SessionMeta
+// (including MemoryKey, Teams, AgentType, Oneshot etc.) for session restore.
+func (m *KubernetesSessionManager) getSessionMetaFromSecret(ctx context.Context, serviceName string) *sessionsettings.SessionMeta {
+	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, settingsSecretName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	yamlData, ok := secret.Data["settings.yaml"]
+	if !ok {
+		return nil
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(yamlData)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to parse settings.yaml from secret %s: %v", settingsSecretName, err)
+		return nil
+	}
+	return &settings.Session
+}
+
+// buildCodexHooksJSON converts a Claude Code settings.json hooks map into the
+// equivalent Codex hooks.json structure. The hook entry format is identical between
+// the two runtimes, so we copy the hooks subtree directly.
+func buildCodexHooksJSON(settingsJSON map[string]interface{}) map[string]interface{} {
+	if settingsJSON == nil {
+		return nil
+	}
+	hooksMap, ok := settingsJSON["hooks"].(map[string]interface{})
+	if !ok || len(hooksMap) == 0 {
+		return nil
+	}
+	return map[string]interface{}{"hooks": hooksMap}
+}
+
+// createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
+// This is used when oneshot is enabled to automatically delete the session after stopping
+func (m *KubernetesSessionManager) createOneshotSettingsSecret(
+	ctx context.Context,
+	session *KubernetesSession,
+) error {
+	secretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
+
+	// Create settings.json with Stop hook
+	settingsJSON := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []map[string]interface{}{
+				{
+					"hooks": []map[string]interface{}{
+						{
+							"type":    "command",
+							"command": "agentapi-proxy client delete-session --confirm",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	settingsData, err := json.Marshal(settingsJSON)
+	if err != nil {
+		return fmt.Errorf("failed to marshal oneshot settings: %w", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            secretName,
+			Namespace:       m.namespace,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
+				"agentapi.proxy/resource":   "oneshot-settings",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"settings.json": settingsData,
+		},
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create oneshot settings secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created oneshot settings Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
+// resolveSandboxParams returns effective SandboxParams by merging a referenced SandboxPolicy
+// (if PolicyID is set) with the session-level overrides in req.Sandbox.
+// Policy domains are prepended; session-level domains are appended on top.
+func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req *entities.RunServerRequest) *entities.SandboxParams {
+	if req.Sandbox == nil {
+		return nil
+	}
+	effective := &entities.SandboxParams{
+		Enabled:        req.Sandbox.Enabled,
+		AllowedDomains: req.Sandbox.AllowedDomains,
+		DeniedDomains:  req.Sandbox.DeniedDomains,
+		CountMode:      req.Sandbox.CountMode,
+	}
+	if req.Sandbox.PolicyID == "" || m.sandboxPolicyRepo == nil {
+		return effective
+	}
+	policy, err := m.sandboxPolicyRepo.GetByID(ctx, req.Sandbox.PolicyID)
+	if err != nil {
+		log.Printf("[K8S_SESSION] sandbox policy %s not found, ignoring: %v", req.Sandbox.PolicyID, err)
+		return effective
+	}
+	effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
+	effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
+	if policy.CountMode() {
+		effective.CountMode = true
+	}
+	return effective
+}
+
+func stockSandboxParams() *entities.SandboxParams {
+	return &entities.SandboxParams{Enabled: true, CountMode: true}
+}
+
+func applySandboxDefaults(req *entities.RunServerRequest) {
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true, CountMode: true}
+		return
+	}
+	req.Sandbox.Enabled = true
+	if req.Sandbox.PolicyID == "" && len(req.Sandbox.AllowedDomains) == 0 && len(req.Sandbox.DeniedDomains) == 0 {
+		req.Sandbox.CountMode = true
+	}
+}
+
+func applySandboxPolicyToProvisioner(ctx context.Context, stockSvc *corev1.Service, sandbox *entities.SandboxParams) error {
+	body, err := json.Marshal(struct {
+		Allowed   []string `json:"allowed,omitempty"`
+		Denied    []string `json:"denied,omitempty"`
+		CountMode bool     `json:"count_mode,omitempty"`
+	}{
+		Allowed:   sessionsettings.SandboxAllowedDomains(sandbox.AllowedDomains, sandbox.DeniedDomains),
+		Denied:    sandbox.DeniedDomains,
+		CountMode: sandbox.CountMode,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal sandbox policy: %w", err)
+	}
+
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/sandbox-policy", stockSvc.Name, stockSvc.Namespace, ProvisionerPort)
+	client := &http.Client{Timeout: 2 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err := postSandboxPolicy(ctx, client, url, body); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return lastErr
+}
+
+func postSandboxPolicy(ctx context.Context, client *http.Client, url string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create sandbox policy request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("post sandbox policy: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("post sandbox policy returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+// buildSandboxContainers returns the init containers (iptables rule generation
+// and restore) and sidecar (network-filter proxy) needed for session network sandboxing.
+// The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
+// via the "--uid-owner 0" match, preventing redirect loops.
+func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.SandboxParams) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
+	var filterEnvVars []corev1.EnvVar
+	if sandbox != nil && len(sandbox.AllowedDomains) > 0 {
+		filterEnvVars = []corev1.EnvVar{
+			{Name: "NETWORK_FILTER_ALLOWED_DOMAINS", Value: strings.Join(sandbox.AllowedDomains, ",")},
+		}
+	} else if sandbox != nil && len(sandbox.DeniedDomains) > 0 {
+		filterEnvVars = []corev1.EnvVar{
+			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: strings.Join(sandbox.DeniedDomains, ",")},
+		}
+	}
+	if sandbox != nil && sandbox.CountMode {
+		filterEnvVars = append(filterEnvVars, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
+	}
+
+	rootUID := int64(0)
+	falseVal := false
+
+	nfaImage := m.k8sConfig.NetworkFilterImage
+	nfaConfig := buildNFAConfig(sandbox)
+
+	initResources := buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit)
+
+	generateRulesInitContainer := corev1.Container{
+		Name:            "network-filter-generate-iptables",
+		Image:           nfaImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command: []string{"/bin/sh", "-ec", `
+printf '%s' "$NFA_CONFIG" > /tmp/nfa-config.yaml
+exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config.yaml
+`},
+		Env: []corev1.EnvVar{{Name: "NFA_CONFIG", Value: nfaConfig}},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+		},
+		Resources: initResources,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+			},
+		},
+	}
+
+	restoreRulesInitContainer := corev1.Container{
+		Name:            "network-filter-setup",
+		Image:           nfaImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"iptables-restore", "/etc/iptables/rules.v4"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
+		},
+		Resources: initResources,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+				ReadOnly:  true,
+			},
+		},
+	}
+
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)
+
+	sidecar := corev1.Container{
+		Name:            "network-filter",
+		Image:           nfaImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"nfa", "proxy", "--deferred-policy"},
+		Env:             filterEnvVars,
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:                &rootUID,
+			RunAsNonRoot:             &falseVal,
+			AllowPrivilegeEscalation: &falseVal,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
+		},
+		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterCPURequest, m.k8sConfig.NetworkFilterCPULimit, m.k8sConfig.NetworkFilterMemoryRequest, m.k8sConfig.NetworkFilterMemoryLimit),
+		Ports: []corev1.ContainerPort{
+			{Name: "proxy", ContainerPort: int32(nfaProxyPort), Protocol: corev1.ProtocolTCP},
+		},
+	}
+
+	// Inject HTTP_PROXY / HTTPS_PROXY env vars into the main container so that
+	// proxy-aware clients (curl, Go's http.Client, pip, npm, etc.) route all
+	// HTTP and HTTPS traffic through the sidecar via CONNECT tunnels.
+	// This covers non-standard ports and avoids SNI-peeking for HTTPS.
+	// Cluster-internal requests must pass through nfa: direct connections would be
+	// rejected by the sandbox's default TCP rule. nfa always bypasses *.svc.cluster.local.
+	// Anthropic API endpoints bypass the proxy so Claude API calls always succeed.
+	noProxy := "127.0.0.1,localhost,anthropic.com,*.anthropic.com"
+	proxyEnvVars := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxyAddr},
+		{Name: "HTTPS_PROXY", Value: proxyAddr},
+		{Name: "http_proxy", Value: proxyAddr},
+		{Name: "https_proxy", Value: proxyAddr},
+		{Name: "NO_PROXY", Value: noProxy},
+		{Name: "no_proxy", Value: noProxy},
+	}
+
+	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
+}
+
+func buildNFAConfig(sandbox *entities.SandboxParams) string {
+	mode := "denylist"
+	domains := []string(nil)
+	countMode := false
+	if sandbox != nil {
+		countMode = sandbox.CountMode
+		switch {
+		case len(sandbox.AllowedDomains) > 0:
+			mode = "allowlist"
+			domains = sandbox.AllowedDomains
+		case len(sandbox.DeniedDomains) > 0:
+			domains = sandbox.DeniedDomains
+		default:
+			mode = "allowlist"
+		}
+	}
+	if mode == "allowlist" {
+		domains = append(domains, sessionsettings.SandboxLocalAddressRanges...)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "filter:\n  mode: %s\n  countMode: %t\n  domains:\n", mode, countMode)
+	for _, domain := range domains {
+		fmt.Fprintf(&b, "    - %s\n", strconv.Quote(domain))
+	}
+	b.WriteString("deferredPolicy: true\n")
+	return b.String()
+}
+
+const (
+	sciaCAPath       = "/etc/scia/mitm/ca.pem"
+	sciaCABundlePath = "/tmp/scia-ca-bundle.pem"
+	sciaNoProxyBase  = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com"
+)
+
+func (m *KubernetesSessionManager) sciaSessionSidecarEnabled(req *entities.RunServerRequest) bool {
+	return m.config != nil && m.config.Scia.Enabled && m.config.Scia.SessionSidecarEnabled
+}
+
+func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool, userToken string) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
+	scia := m.config.Scia
+	port := scia.SessionSidecarPort
+	if port == 0 {
+		port = 18081
+	}
+	userNamespace := scia.UserNamespace
+	if userNamespace == "" {
+		userNamespace = sanitizeSciaDynamicUserID(req.UserID)
+	}
+	if userNamespace == "" {
+		userNamespace = "default"
+	}
+	credentialID := scia.Credential
+	if credentialID == "" {
+		credentialID = userNamespace + ".google"
+	}
+	hosts := scia.GoogleHosts
+	if len(hosts) == 0 {
+		hosts = []string{"www.googleapis.com"}
+	}
+	paths := scia.GooglePaths
+	if len(paths) == 0 {
+		paths = []string{"/calendar/v3/*"}
+	}
+	todoistCredentialID := scia.TodoistCredential
+	if todoistCredentialID == "" {
+		todoistCredentialID = userNamespace + ".todoist"
+	}
+	todoistHosts := scia.TodoistHosts
+	if len(todoistHosts) == 0 {
+		todoistHosts = []string{"api.todoist.com"}
+	}
+	todoistPaths := scia.TodoistPaths
+	if len(todoistPaths) == 0 {
+		todoistPaths = []string{"/api/v1/*"}
+	}
+
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, todoistCredentialID, userToken, port, hosts, paths, todoistHosts, todoistPaths, sandboxEnabled)
+	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
+
+	initContainer := corev1.Container{
+		Name:            "scia-config",
+		Image:           defaultIfEmpty(scia.SessionSidecarConfigImage, "busybox:1.36"),
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"sh", "-c", configScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "scia-config", MountPath: "/etc/scia-config"},
+		},
+	}
+
+	sidecar := corev1.Container{
+		Name:            "scia-proxy",
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.17.0"),
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "scia-proxy", ContainerPort: int32(port), Protocol: corev1.ProtocolTCP},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "scia-config", MountPath: "/etc/scia-config", ReadOnly: true},
+			{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm"},
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/_scia/healthz",
+					Port: intstr.FromInt(port),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       2,
+		},
+	}
+
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", port)
+	noProxy := mergeNoProxy(sciaNoProxyBase, scia.NoProxy)
+	envVars := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxyAddr},
+		{Name: "HTTPS_PROXY", Value: proxyAddr},
+		{Name: "http_proxy", Value: proxyAddr},
+		{Name: "https_proxy", Value: proxyAddr},
+		{Name: "NO_PROXY", Value: noProxy},
+		{Name: "no_proxy", Value: noProxy},
+		{Name: "SSL_CERT_FILE", Value: sciaCABundlePath},
+		{Name: "REQUESTS_CA_BUNDLE", Value: sciaCABundlePath},
+		{Name: "CURL_CA_BUNDLE", Value: sciaCABundlePath},
+		{Name: "GIT_SSL_CAINFO", Value: sciaCABundlePath},
+		{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath},
+		{Name: "AGENTAPI_SCIA_PROXY_URL", Value: proxyAddr},
+		{Name: "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", Value: credentialID},
+		{Name: "AGENTAPI_SCIA_TODOIST_CREDENTIAL", Value: todoistCredentialID},
+		{Name: "AGENTAPI_SCIA_USER_NAMESPACE", Value: userNamespace},
+	}
+
+	return &initContainer, &sidecar, envVars
+}
+
+func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistCredentialID, userToken string, port int, hosts, paths, todoistHosts, todoistPaths []string, useNFA bool) string {
+	var b strings.Builder
+	b.WriteString("server:\n")
+	b.WriteString("  mode: proxy\n")
+	fmt.Fprintf(&b, "  listen: %q\n", fmt.Sprintf("0.0.0.0:%d", port))
+	if useNFA {
+		b.WriteString("  backendProxy:\n")
+		fmt.Fprintf(&b, "    url: %q\n", fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort))
+	}
+	b.WriteString("  integrations:\n")
+	b.WriteString("    google:\n")
+	b.WriteString("      hosts:\n")
+	for _, host := range hosts {
+		fmt.Fprintf(&b, "        - %q\n", host)
+	}
+	b.WriteString("    todoist:\n")
+	b.WriteString("      hosts:\n")
+	for _, host := range todoistHosts {
+		fmt.Fprintf(&b, "        - %q\n", host)
+	}
+	b.WriteString("  mitm:\n")
+	fmt.Fprintf(&b, "    caCertPath: %q\n", sciaCAPath)
+	b.WriteString("    caKeyPath: \"/etc/scia/mitm/ca.key\"\n")
+	b.WriteString("  secrets:\n")
+	b.WriteString("    mode: kubernetes\n")
+	b.WriteString("    kubernetes:\n")
+	fmt.Fprintf(&b, "      namespace: %q\n", namespace)
+	b.WriteString("      dynamicUsers: true\n")
+	b.WriteString("      dynamicUserSecretNamePrefix: \"scia-oauth-\"\n")
+	b.WriteString("credentials:\n")
+	fmt.Fprintf(&b, "  - id: %q\n", credentialID)
+	b.WriteString("    type: google-oauth-refresh-token\n")
+	b.WriteString("    params:\n")
+	fmt.Fprintf(&b, "      user: %q\n", userNamespace)
+	fmt.Fprintf(&b, "      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "google", userToken))
+	fmt.Fprintf(&b, "  - id: %q\n", todoistCredentialID)
+	b.WriteString("    type: todoist-oauth-refresh-token\n")
+	b.WriteString("    params:\n")
+	fmt.Fprintf(&b, "      user: %q\n", userNamespace)
+	fmt.Fprintf(&b, "      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "todoist", userToken))
+	b.WriteString("rules:\n")
+	b.WriteString("  - name: inject-google-oauth-token\n")
+	b.WriteString("    hosts:\n")
+	for _, host := range hosts {
+		fmt.Fprintf(&b, "      - %q\n", host)
+	}
+	b.WriteString("    paths:\n")
+	for _, path := range paths {
+		fmt.Fprintf(&b, "      - %q\n", path)
+	}
+	b.WriteString("    action: allow\n")
+	b.WriteString("    credentials:\n")
+	fmt.Fprintf(&b, "      - %q\n", credentialID)
+	b.WriteString("  - name: inject-todoist-oauth-token\n")
+	b.WriteString("    hosts:\n")
+	for _, host := range todoistHosts {
+		fmt.Fprintf(&b, "      - %q\n", host)
+	}
+	b.WriteString("    paths:\n")
+	for _, path := range todoistPaths {
+		fmt.Fprintf(&b, "      - %q\n", path)
+	}
+	b.WriteString("    action: allow\n")
+	b.WriteString("    credentials:\n")
+	fmt.Fprintf(&b, "      - %q\n", todoistCredentialID)
+	return b.String()
+}
+
+func sciaTokenBrokerURL(namespace, provider, userToken string) string {
+	brokerURL := fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/token", namespace, url.PathEscape(provider))
+	if userToken == "" {
+		return brokerURL
+	}
+	return brokerURL + "?user_token=" + url.QueryEscape(userToken)
+}
+
+var sciaDynamicUserInvalidChars = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func sanitizeSciaDynamicUserID(value string) string {
+	value = strings.ToLower(value)
+	value = sciaDynamicUserInvalidChars.ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "default"
+	}
+	if len(value) > 63 {
+		value = strings.Trim(value[:63], "-")
+	}
+	if value == "" {
+		return "default"
+	}
+	return value
+}
+
+// buildDinDContainers returns the DinD sidecar container, env vars for the main container,
+// and extra volumes needed for Docker-in-Docker support.
+// The DinD daemon listens on TCP port 2375 (no TLS) so no socket volume sharing is needed.
+// The main container gets DOCKER_HOST=tcp://127.0.0.1:2375 to connect to the daemon.
+func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.DockerConfig) (*corev1.Container, []corev1.EnvVar, []corev1.Volume) {
+	dindImage := m.k8sConfig.DinDImage
+	if dindImage == "" {
+		dindImage = "docker:dind"
+	}
+
+	trueVal := true
+	falseVal := false
+	rootUID := int64(0)
+
+	dindArgs := []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"}
+	if docker != nil {
+		for _, reg := range docker.Registries {
+			if reg.Insecure && reg.Server != "" {
+				dindArgs = append(dindArgs, "--insecure-registry="+reg.Server)
+			}
+		}
+	}
+
+	sidecar := corev1.Container{
+		Name:            "docker-dind",
+		Image:           dindImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args:            dindArgs,
+		SecurityContext: &corev1.SecurityContext{
+			Privileged:   &trueVal,
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+		},
+		Resources: buildResourceRequirements(
+			defaultIfEmpty(m.k8sConfig.DinDCPURequest, "2"),
+			defaultIfEmpty(m.k8sConfig.DinDCPULimit, "2"),
+			defaultIfEmpty(m.k8sConfig.DinDMemoryRequest, "2Gi"),
+			defaultIfEmpty(m.k8sConfig.DinDMemoryLimit, "2Gi"),
+		),
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "docker-storage",
+				MountPath: "/var/lib/docker",
+			},
+			{
+				Name:      "workdir",
+				MountPath: "/home/agentapi/workdir",
+			},
+		},
+	}
+
+	volumes := []corev1.Volume{
+		{
+			Name: "docker-storage",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+
+	// Resolve registry secret from per-session config.
+	var registrySecretName string
+	if docker != nil {
+		for _, reg := range docker.Registries {
+			if reg.SecretName != "" {
+				registrySecretName = reg.SecretName
+				break
+			}
+		}
+	}
+
+	if registrySecretName != "" {
+		sidecar.VolumeMounts = append(sidecar.VolumeMounts, corev1.VolumeMount{
+			Name:      "docker-registry-config",
+			MountPath: "/root/.docker/config.json",
+			SubPath:   "config.json",
+			ReadOnly:  true,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: "docker-registry-config",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: registrySecretName,
+					Optional:   boolPtr(true),
+				},
+			},
+		})
+	}
+
+	// Set DOCKER_HOST in the main container so docker CLI commands connect to the DinD daemon.
+	mainEnvVars := []corev1.EnvVar{
+		{Name: "DOCKER_HOST", Value: "tcp://127.0.0.1:2375"},
+	}
+
+	return &sidecar, mainEnvVars, volumes
+}
+
+func defaultIfEmpty(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+// buildResourceRequirements constructs a corev1.ResourceRequirements from string quantities.
+// Any empty string is silently omitted, allowing partial specification.
+func buildResourceRequirements(cpuReq, cpuLim, memReq, memLim string) corev1.ResourceRequirements {
+	requests := corev1.ResourceList{}
+	limits := corev1.ResourceList{}
+	if cpuReq != "" {
+		requests[corev1.ResourceCPU] = resource.MustParse(cpuReq)
+	}
+	if memReq != "" {
+		requests[corev1.ResourceMemory] = resource.MustParse(memReq)
+	}
+	if cpuLim != "" {
+		limits[corev1.ResourceCPU] = resource.MustParse(cpuLim)
+	}
+	if memLim != "" {
+		limits[corev1.ResourceMemory] = resource.MustParse(memLim)
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
+}
+
+// buildVolumes builds the volume configuration for the session pod
+func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []corev1.Volume {
+	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
+	var workdirVolume corev1.Volume
+	if m.isPVCEnabled() {
+		workdirVolume = corev1.Volume{
+			Name: "workdir",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: session.PVCName(),
+				},
+			},
+		}
+	} else {
+		workdirVolume = corev1.Volume{
+			Name: "workdir",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+	}
+
+	// Note: credentials are no longer mounted as a volume. Instead they are
+	// embedded in SessionSettings.Credentials and written to ~/.codex/auth.json
+	// by the provisioner at startup. The runCredentialsSync goroutine then
+	// watches the file and syncs any changes back to the Secret.
+
+	volumes := []corev1.Volume{
+		// Workdir volume (PVC or EmptyDir based on configuration)
+		workdirVolume,
+		// dot-claude EmptyDir – used by main container for Claude Code settings
+		{
+			Name: "dot-claude",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+
+	// Add notification subscription Secret volume (source for init container)
+	// Secret name follows the pattern: notification-subscriptions-{userID}
+	notificationSecretName := fmt.Sprintf("notification-subscriptions-%s", sanitizeLabelValue(session.Request().UserID))
+	volumes = append(volumes, corev1.Volume{
+		Name: "notification-subscriptions-source",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: notificationSecretName,
+				Optional:   boolPtr(true), // Optional - user may not have subscriptions
+			},
+		},
+	})
+
+	// session-settings Secret – optional volume for Pod restart auto-provisioning.
+	// Created after successful provisioning; not present on first startup.
+	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+	optionalTrue := true
+	volumes = append(volumes, corev1.Volume{
+		Name: "session-settings",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: sessionSettingsSecretName,
+				Optional:   &optionalTrue,
+			},
+		},
+	})
+
+	// Note: The "initial-message-state" EmptyDir volume is no longer needed because
+	// the initial-message-sender sidecar has been removed. Initial message sending
+	// is now handled internally by agent-provisioner.
+
+	// Add webhook payload volume if webhook payload is provided
+	if len(session.WebhookPayload()) > 0 {
+		webhookPayloadSecretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
+		volumes = append(volumes, corev1.Volume{
+			Name: "webhook-payload",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: webhookPayloadSecretName,
+					Optional:   boolPtr(true),
+				},
+			},
+		})
+	}
+
+	// No otelcol ConfigMap volume needed: otelcol runs as an in-process subprocess
+	// and generates its config file at /tmp/otelcol-config.yaml at provisioning time.
+
+	return volumes
+}
+
+// createService creates a Service for the session
+func (m *KubernetesSessionManager) createService(ctx context.Context, session *KubernetesSession) error {
+	return m.createServiceWithLabels(ctx, session, m.buildLabels(session))
+}
+
+func (m *KubernetesSessionManager) createServiceWithLabels(ctx context.Context, session *KubernetesSession, labels map[string]string) error {
+	annotations := map[string]string{
+		"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
+		"agentapi.proxy/updated-at": session.startedAt.Format(time.RFC3339),
+		"agentapi.proxy/team-id":    session.Request().TeamID, // Store original team_id (unsanitized)
+	}
+	if session.Request().AgentType != "" {
+		annotations["agentapi.proxy/agent-type"] = session.Request().AgentType
+	}
+	// Store initial message in annotation so all proxy replicas can read it immediately,
+	// without waiting for the settings Secret (which is created asynchronously).
+	if session.Request().InitialMessage != "" {
+		annotations["agentapi.proxy/initial-message"] = session.Request().InitialMessage
+	}
+	// Record the initial message time as the last message time for all sessions.
+	// This annotation is updated by SendMessage when follow-up messages arrive.
+	annotations["agentapi.proxy/last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
+	if session.Request().SessionTTL != "" {
+		annotations["agentapi.proxy/session-ttl"] = session.Request().SessionTTL
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        session.ServiceName(),
+			Namespace:   m.namespace,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
+			Selector: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+			},
+			Ports: m.buildServicePorts(session),
+		},
+	}
+
+	_, err := m.client.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
+	return err
+}
+
+func (m *KubernetesSessionManager) sessionServiceOwnerReferences(ctx context.Context, sessionID string) []metav1.OwnerReference {
+	if m == nil || m.client == nil {
+		return nil
+	}
+	svcName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, svcName, metav1.GetOptions{})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to get Service %s for owner reference: %v", svcName, err)
+		return nil
+	}
+	return []metav1.OwnerReference{
+		{
+			APIVersion: "v1",
+			Kind:       "Service",
+			Name:       svc.Name,
+			UID:        svc.UID,
+		},
+	}
+}
+
+// watchSession monitors the session deployment status
+func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *KubernetesSession) {
+	defer func() {
+		log.Printf("[K8S_SESSION] Session %s watch ended", session.id)
+	}()
+
+	// Wait for deployment to be ready
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	timeout := time.After(time.Duration(m.k8sConfig.PodStartTimeout) * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[K8S_SESSION] Session %s context cancelled", session.id)
+			return
+
+		case <-timeout:
+			log.Printf("[K8S_SESSION] Session %s startup timeout", session.id)
+			session.SetStatus("timeout")
+			return
+
+		case <-ticker.C:
+			ready, err := m.isSessionWorkloadReady(context.Background(), session)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					log.Printf("[K8S_SESSION] Workload %s not found, session may have been deleted", session.DeploymentName())
+					return
+				}
+				log.Printf("[K8S_SESSION] Error getting workload: %v", err)
+				continue
+			}
+
+			// Check workload status
+			if ready {
+				session.SetStatus("starting")
+				log.Printf("[K8S_SESSION] Session %s Pod is ready", session.id)
+
+				log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for session %s", session.id)
+				if err := m.waitForPullProvisioner(ctx, session); err != nil {
+					log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
+					session.SetStatus("error")
+					return
+				}
+
+				session.SetStatus("active")
+				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
+
+				// Continue watching deployment health and agentapi runtime status.
+				go m.watchAgentAPIStatus(ctx, session)
+				m.watchDeploymentStatus(ctx, session)
+				return
+			}
+
+			session.SetStatus("starting")
+		}
+	}
+}
+
+// watchDeploymentStatus continuously watches the deployment status after it becomes ready
+func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, session *KubernetesSession) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			ready, err := m.isSessionWorkloadReady(context.Background(), session)
+			if err != nil {
+				if errors.IsNotFound(err) {
+					if session.Status() != "suspended" {
+						session.SetStatus("stopped")
+					}
+					return
+				}
+				continue
+			}
+
+			if !ready {
+				session.SetStatus("unhealthy")
+			} else {
+				// Only recover to "active" from a bad state.
+				// Do not overwrite "running" (agentapi is processing a message).
+				current := session.Status()
+				if current == "unhealthy" || current == "stopped" || current == "error" || current == "timeout" {
+					session.SetStatus("active")
+				}
+			}
+		}
+	}
+}
+
+// deleteSessionResources deletes all Kubernetes resources for a session
+func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, session *KubernetesSession) error {
+	deletePolicy := metav1.DeletePropagationForeground
+	deleteOptions := metav1.DeleteOptions{
+		PropagationPolicy: &deletePolicy,
+	}
+
+	var errs []string
+
+	// Delete Service
+	err := m.client.CoreV1().Services(m.namespace).Delete(ctx, session.ServiceName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("service: %v", err))
+	}
+
+	// Delete workload. Try both kinds so sessions created before a PVC setting
+	// change are cleaned up correctly.
+	err = m.client.AppsV1().Deployments(m.namespace).Delete(ctx, session.DeploymentName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("deployment: %v", err))
+	}
+	err = m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("pod: %v", err))
+	}
+
+	// Delete PVC if present. Do not depend on the current PVC setting because
+	// old sessions may predate the setting.
+	err = m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.PVCName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("pvc: %v", err))
+	}
+
+	// Delete webhook payload Secret
+	if err := m.deleteWebhookPayloadSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("webhook-payload-secret: %v", err))
+	}
+
+	// Delete session settings Secret
+	if err := m.deleteSessionSettingsSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("session-settings-secret: %v", err))
+	}
+
+	// Delete oneshot settings Secret (bug fix - was not being deleted before)
+	if err := m.deleteOneshotSettingsSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("oneshot-settings-secret: %v", err))
+	}
+
+	if err := m.deleteProvisionRequest(ctx, session.id); err != nil {
+		errs = append(errs, fmt.Sprintf("provision-request-secret: %v", err))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to delete resources: %s", strings.Join(errs, ", "))
+	}
+
+	return nil
+}
+
+// cleanupSession removes a session from the internal map and releases its message subscribers.
+func (m *KubernetesSessionManager) cleanupSession(id string) {
+	m.mutex.Lock()
+	delete(m.sessions, id)
+	m.mutex.Unlock()
+	// Close all per-session message subscribers to unblock any waiting long-poll handlers.
+	// Called after releasing m.mutex to avoid holding two locks simultaneously.
+	m.cleanupMessageSubs(id)
+}
+
+// buildLabelSelector builds a Kubernetes label selector string from entities.SessionFilter
+// This allows filtering at the API level for better performance
+func (m *KubernetesSessionManager) buildLabelSelector(filter entities.SessionFilter) string {
+	// Base selector for agentapi sessions.
+	// "!agentapi.proxy/stock" excludes Services that are still in stock state
+	// (stock=true: unclaimed, stock=claiming: being adopted).  This prevents
+	// other proxy replicas from restoring a stock/claiming Service with an empty
+	// user-id during the adoption window, which would cause 403 errors and
+	// sessions appearing/disappearing across replicas.
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,!agentapi.proxy/stock"
+
+	// Add UserID filter
+	if filter.UserID != "" {
+		selector += ",agentapi.proxy/user-id=" + sanitizeLabelValue(filter.UserID)
+	}
+
+	// Add Scope filter (only for team scope to maintain backward compatibility)
+	// Note: scope=user is not added to LabelSelector because old sessions may not have
+	// the scope label set. These sessions should be treated as user-scoped by default.
+	// Go-level filtering handles scope=user cases properly via session.Scope() method.
+	if filter.Scope == entities.ScopeTeam {
+		selector += ",agentapi.proxy/scope=" + string(filter.Scope)
+	}
+
+	// Add TeamID filter using sha256 hash for consistent matching
+	if filter.TeamID != "" {
+		selector += ",agentapi.proxy/team-id-hash=" + hashTeamID(filter.TeamID)
+	}
+
+	return selector
+}
+
+// buildLabels creates standard labels for Kubernetes resources
+func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[string]string {
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "agentapi-session",
+		"app.kubernetes.io/instance":   session.id,
+		"app.kubernetes.io/managed-by": "agentapi-proxy",
+		"agentapi.proxy/session-id":    session.id,
+		"agentapi.proxy/user-id":       sanitizeLabelValue(session.Request().UserID),
+	}
+
+	// Add scope and team_id labels for filtering
+	// Always set scope label (default to "user" if not specified)
+	scope := session.Request().Scope
+	if scope == "" {
+		scope = entities.ScopeUser
+	}
+	labels["agentapi.proxy/scope"] = string(scope)
+	if session.Request().TeamID != "" {
+		// Use sha256 hash for team-id label to avoid sanitization issues with "/" in team IDs
+		// The original team_id is stored in annotations for restoration
+		labels["agentapi.proxy/team-id-hash"] = hashTeamID(session.Request().TeamID)
+	}
+
+	// Add tags as labels (sanitized for Kubernetes)
+	for k, v := range session.Request().Tags {
+		labelKey := fmt.Sprintf("agentapi.proxy/tag-%s", sanitizeLabelKey(k))
+		labels[labelKey] = sanitizeLabelValue(v)
+	}
+
+	if session.isStock {
+		labels["agentapi.proxy/stock"] = "true"
+	}
+	req := session.Request()
+	// Sandbox (network filter) is always enabled
+	labels["agentapi.proxy/capability-sandbox"] = "true"
+	labels["agentapi.proxy/capability-dind"] = fmt.Sprintf("%t", req.Docker != nil && req.Docker.Enabled)
+	if req.AgentType != "" {
+		labels["agentapi.proxy/agent-type"] = sanitizeLabelValue(req.AgentType)
+	}
+
+	return labels
+}
+
+// buildEnvVars creates environment variables for the session pod
+func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req *entities.RunServerRequest) []corev1.EnvVar {
+	envVars := []corev1.EnvVar{
+		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
+		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
+		{Name: "HOME", Value: "/home/agentapi"},
+		// GitHub App PEM path (file is written by setup directly to container FS)
+		{Name: "GITHUB_APP_PEM_PATH", Value: "/tmp/github-app/app.pem"},
+	}
+
+	// Add Claude Code telemetry configuration
+	if m.k8sConfig.OtelCollectorEnabled {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "CLAUDE_CODE_ENABLE_TELEMETRY", Value: "1"},
+			corev1.EnvVar{Name: "OTEL_METRICS_EXPORTER", Value: "prometheus"},
+		)
+	}
+
+	// Add Team ID if in team scope
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID})
+	}
+
+	// Add Agent Type if specified
+	if req.AgentType != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_AGENT_TYPE", Value: req.AgentType})
+	}
+
+	proxyURL := m.k8sConfig.ProvisionerProxyURL
+	if proxyURL == "" {
+		proxyURL = fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
+	}
+	envVars = append(envVars,
+		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
+		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
+		corev1.EnvVar{
+			Name: "POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.name",
+			}},
+		},
+		corev1.EnvVar{
+			Name: "POD_NAMESPACE",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.namespace",
+			}},
+		},
+	)
+
+	// Add CLAUDE_ARGS from request environment or proxy's environment
+	claudeArgs := ""
+	if req.Environment != nil {
+		if v, ok := req.Environment["CLAUDE_ARGS"]; ok {
+			claudeArgs = v
+		}
+	}
+	if claudeArgs == "" {
+		claudeArgs = os.Getenv("CLAUDE_ARGS")
+	}
+	if claudeArgs != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "CLAUDE_ARGS", Value: claudeArgs})
+	}
+
+	// Add repository info if available
+	if req.RepoInfo != nil {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "AGENTAPI_REPO_FULLNAME", Value: req.RepoInfo.FullName},
+			corev1.EnvVar{Name: "AGENTAPI_CLONE_DIR", Value: "/home/agentapi/workdir/repo"},
+		)
+	}
+
+	// Add environment variables from request (except CLAUDE_ARGS which is already handled)
+	for k, v := range req.Environment {
+		if k != "CLAUDE_ARGS" {
+			envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
+		}
+	}
+
+	if req.AgentType == "pi-ollama" {
+		envVars = ensurePiOllamaPodEnv(envVars)
+	}
+
+	// Add VAPID environment variables for push notifications
+	vapidEnvVars := []string{"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_CONTACT_EMAIL"}
+	for _, envName := range vapidEnvVars {
+		if value := os.Getenv(envName); value != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: envName, Value: value})
+		}
+	}
+
+	// Add notification base URL so session pods can construct correct notification URLs
+	if value := os.Getenv("NOTIFICATION_BASE_URL"); value != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "NOTIFICATION_BASE_URL", Value: value})
+	}
+
+	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
+	// which is synced by CredentialsSecretSyncer when settings are updated via API
+
+	return envVars
+}
+
+const (
+	piOllamaCommandPath      = "/home/agentapi/.session/pi-ollama-pi"
+	piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
+test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
+if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ] && [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+  echo "Pi extensions already installed, skipping install"
+else
+  NPM_SHIM_DIR="$(mktemp -d)"
+  trap 'rm -rf "$NPM_SHIM_DIR"' EXIT
+  cat > "$NPM_SHIM_DIR/npm" <<'EOF'
+#!/bin/sh
+set -e
+prefix=""
+packages=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    install) shift ;;
+    --prefix) prefix="$2"; shift 2 ;;
+    --legacy-peer-deps) shift ;;
+    *) packages="$packages $1"; shift ;;
+  esac
+done
+if [ -z "$prefix" ]; then prefix="$PWD"; fi
+mkdir -p "$prefix"
+test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
+exec bun add --cwd "$prefix" $packages
+EOF
+  chmod +x "$NPM_SHIM_DIR/npm"
+  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
+    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+  fi
+  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-mcp-adapter
+  fi
+  rm -rf "$NPM_SHIM_DIR"
+  trap - EXIT
+fi`
+)
+
+func ensurePiOllamaPodEnv(envVars []corev1.EnvVar) []corev1.EnvVar {
+	values := make(map[string]string, len(envVars))
+	for _, envVar := range envVars {
+		if envVar.ValueFrom == nil {
+			values[envVar.Name] = envVar.Value
+		}
+	}
+
+	if strings.TrimSpace(values["PI_ACP_PI_COMMAND"]) == "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "PI_ACP_PI_COMMAND", Value: piOllamaCommandPath})
+	}
+
+	return envVars
+}
+
+func ensurePiOllamaSettingsEnv(env map[string]string) {
+	if env == nil {
+		return
+	}
+	if strings.TrimSpace(env["PI_ACP_PI_COMMAND"]) == "" {
+		env["PI_ACP_PI_COMMAND"] = piOllamaCommandPath
+	}
+}
+
+// sanitizeLabelKey sanitizes a string to be used as a Kubernetes label key
+// patchLastMessageAt applies a MergePatch to update the last-message-at annotation.
+func (m *KubernetesSessionManager) patchLastMessageAt(ctx context.Context, svcName string, t time.Time) error {
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{
+				"agentapi.proxy/last-message-at": t.UTC().Format(time.RFC3339),
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+	_, err = m.client.CoreV1().Services(m.namespace).Patch(
+		ctx, svcName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	return err
+}
+
+func sanitizeLabelKey(s string) string {
+	// Label keys must be 63 characters or less
+	// Must start and end with alphanumeric character
+	// Can contain dashes, underscores, dots, and alphanumerics
+	re := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
+	sanitized := re.ReplaceAllString(s, "-")
+	if len(sanitized) > 63 {
+		sanitized = sanitized[:63]
+	}
+	// Trim non-alphanumeric characters from start and end
+	sanitized = strings.Trim(sanitized, "-_.")
+	return sanitized
+}
+
+// hashTeamID creates a sha256 hash of the team ID for use as a Kubernetes label value
+// This allows querying by team_id without sanitization issues (e.g., "/" in team IDs)
+// The hash is truncated to 63 characters to fit within Kubernetes label value limits
+func hashTeamID(teamID string) string {
+	if teamID == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(teamID))
+	hexHash := hex.EncodeToString(hash[:])
+	// Truncate to 63 characters (Kubernetes label value limit)
+	if len(hexHash) > 63 {
+		hexHash = hexHash[:63]
+	}
+	return hexHash
+}
+
+// int64Ptr returns a pointer to an int64
+func int64Ptr(i int64) *int64 {
+	return &i
+}
+
+// boolPtr returns a pointer to a bool
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// isPVCEnabled returns whether PVC is enabled for session workdir
+// Returns true by default if not explicitly set
+func (m *KubernetesSessionManager) isPVCEnabled() bool {
+	if m.k8sConfig.PVCEnabled == nil {
+		return true // Default to enabled
+	}
+	return *m.k8sConfig.PVCEnabled
+}
+
+// GetClient returns the Kubernetes client (used by subscription secret syncer)
+func (m *KubernetesSessionManager) GetClient() kubernetes.Interface {
+	return m.client
+}
+
+// GetNamespace returns the Kubernetes namespace (used by subscription secret syncer)
+func (m *KubernetesSessionManager) GetNamespace() string {
+	return m.namespace
+}
+
+// SetSettingsRepository sets the settings repository for Bedrock configuration
+func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.SettingsRepository) {
+	m.settingsRepo = repo
+}
+
+// SetTeamConfigRepository sets the team config repository for service account configuration
+func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamConfigRepository) {
+	m.teamConfigRepo = repo
+}
+
+// SetSandboxPolicyRepository sets the sandbox policy repository for policy resolution at session creation.
+func (m *KubernetesSessionManager) SetSandboxPolicyRepository(repo portrepos.SandboxPolicyRepository) {
+	m.sandboxPolicyRepo = repo
+}
+
+// SetServiceAccountEnsurer sets the service account ensurer for team-scoped session creation
+func (m *KubernetesSessionManager) SetServiceAccountEnsurer(ensurer ServiceAccountEnsurer) {
+	m.serviceAccountEnsurer = ensurer
+}
+
+// SetPersonalAPIKeyLoader wires in the auth-layer loader so that personal API
+// keys created on-the-fly in buildSessionSettings are immediately available for
+// authentication (without requiring a proxy restart to re-run bootstrap).
+func (m *KubernetesSessionManager) SetPersonalAPIKeyLoader(loader PersonalAPIKeyLoader) {
+	m.personalAPIKeyLoader = loader
+}
+
+// AddSessionDeletedHandler registers a handler that is invoked when a session is deleted,
+// before its Kubernetes resources are removed. Multiple handlers can be registered and
+// they are called in registration order.
+func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDeletedHandler) {
+	m.handlersMutex.Lock()
+	defer m.handlersMutex.Unlock()
+	m.onSessionDeletedHandlers = append(m.onSessionDeletedHandlers, handler)
+}
+
+// broadcastStatusChangeLocal broadcasts a SessionStatusEvent to all local
+// (in-process) SSE subscribers without publishing to Redis.
+// Called by consumeStatusEvents when replaying a cross-pod event so the event
+// reaches local SSE clients without causing a Redis re-publish loop.
+func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status string) {
+	evt := SessionStatusEvent{
+		SessionID: sessionID,
+		Status:    status,
+		Timestamp: time.Now(),
+	}
+	m.globalSubsMu.Lock()
+	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d (cross-pod relay)", sessionID, status, len(m.globalSubs))
+	for _, ch := range m.globalSubs {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
+	m.globalSubsMu.Unlock()
+
+	// Invalidate session-list cache so the updated status is reflected immediately
+	// on this pod as well (the originating pod already invalidated its own cache).
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on cross-pod status change session=%s: %v", sessionID, err)
+		}
+	}
+}
+
+// broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
+// It is registered as the statusChangeCallback on each KubernetesSession.
+// Non-blocking: slow subscribers are skipped to avoid stalling SetStatus.
+// When a StatusEventRepository is configured it also persists the status and
+// publishes an event for other pods to pick up.
+func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string) {
+	evt := SessionStatusEvent{
+		SessionID: sessionID,
+		Status:    status,
+		Timestamp: time.Now(),
+	}
+	m.globalSubsMu.Lock()
+	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d", sessionID, status, len(m.globalSubs))
+	for _, ch := range m.globalSubs {
+		select {
+		case ch <- evt:
+		default:
+			// subscriber channel is full; drop to avoid blocking the caller
+		}
+	}
+	m.globalSubsMu.Unlock()
+
+	// Persist and publish to Redis so other pods are notified.
+	if m.statusEventRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := m.statusEventRepo.SetStatus(ctx, sessionID, status, m.podID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to persist status to Redis session=%s: %v", sessionID, err)
+		}
+		crossEvt := portrepos.StatusChangeEvent{
+			SessionID: sessionID,
+			Status:    status,
+			UpdatedAt: time.Now(),
+			PodID:     m.podID,
+		}
+		if err := m.statusEventRepo.PublishStatusChange(ctx, crossEvt); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to publish status to Redis session=%s: %v", sessionID, err)
+		}
+	}
+
+	// Invalidate session-list cache so the updated status is reflected immediately.
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on status change session=%s: %v", sessionID, err)
+		}
+	}
+}
+
+// broadcastMessageUpdate notifies all active per-session subscribers that a message_update
+// event was received from the agentapi backend for the given session.
+// Also updates the session's lastMessageAt so late-arriving pollers can detect the update.
+// Non-blocking: slow subscribers are skipped to avoid stalling the SSE reader goroutine.
+func (m *KubernetesSessionManager) broadcastMessageUpdate(sessionID string) {
+	now := time.Now()
+	m.mutex.RLock()
+	session, exists := m.sessions[sessionID]
+	m.mutex.RUnlock()
+	if exists {
+		session.SetLastMessageAt(now)
+	}
+
+	evt := SessionMessageEvent{SessionID: sessionID, Timestamp: now}
+	m.messageSubsMu.Lock()
+	defer m.messageSubsMu.Unlock()
+	subs, ok := m.messageSubs[sessionID]
+	if !ok {
+		return
+	}
+	log.Printf("[MSG_BROADCAST] session=%s subscribers=%d", sessionID, len(subs))
+	for _, ch := range subs {
+		select {
+		case ch <- evt:
+		default:
+			// subscriber channel is full; drop to avoid blocking the caller
+		}
+	}
+}
+
+// SubscribeMessageEvents registers a new per-session subscriber for message_update events.
+// Returns a channel that receives SessionMessageEvent values whenever the agentapi backend
+// for the given session emits a message_update event, and a cancel func that must be called
+// to unsubscribe (closes the channel).
+func (m *KubernetesSessionManager) SubscribeMessageEvents(sessionID string) (<-chan SessionMessageEvent, func()) {
+	m.messageSubsMu.Lock()
+	defer m.messageSubsMu.Unlock()
+	if _, ok := m.messageSubs[sessionID]; !ok {
+		m.messageSubs[sessionID] = make(map[uint64]chan SessionMessageEvent)
+	}
+	id := m.nextMessageSubID
+	m.nextMessageSubID++
+	ch := make(chan SessionMessageEvent, 32)
+	m.messageSubs[sessionID][id] = ch
+	cancel := func() {
+		m.messageSubsMu.Lock()
+		defer m.messageSubsMu.Unlock()
+		if subs, ok := m.messageSubs[sessionID]; ok {
+			if c, ok := subs[id]; ok {
+				close(c)
+				delete(subs, id)
+			}
+			if len(subs) == 0 {
+				delete(m.messageSubs, sessionID)
+			}
+		}
+	}
+	return ch, cancel
+}
+
+// cleanupMessageSubs closes all active message subscribers for a session and removes them.
+// Called during session deletion to prevent goroutine leaks.
+func (m *KubernetesSessionManager) cleanupMessageSubs(sessionID string) {
+	m.messageSubsMu.Lock()
+	defer m.messageSubsMu.Unlock()
+	if subs, ok := m.messageSubs[sessionID]; ok {
+		for _, ch := range subs {
+			close(ch)
+		}
+		delete(m.messageSubs, sessionID)
+	}
+}
+
+// SubscribeStatusEvents registers a new proxy-wide subscriber for session status changes.
+// Returns a channel that receives SessionStatusEvent values whenever any session's status
+// changes, and a cancel func that must be called to unsubscribe (closes the channel).
+func (m *KubernetesSessionManager) SubscribeStatusEvents() (<-chan SessionStatusEvent, func()) {
+	m.globalSubsMu.Lock()
+	defer m.globalSubsMu.Unlock()
+	id := m.nextGlobalSubID
+	m.nextGlobalSubID++
+	ch := make(chan SessionStatusEvent, 32)
+	m.globalSubs[id] = ch
+	cancel := func() {
+		m.globalSubsMu.Lock()
+		defer m.globalSubsMu.Unlock()
+		if ch, ok := m.globalSubs[id]; ok {
+			close(ch)
+			delete(m.globalSubs, id)
+		}
+	}
+	return ch, cancel
+}
+
+// watchAgentAPIStatus subscribes to the agentapi backend's /events SSE stream for the
+// given session. Whenever the runtime status changes (stable ↔ running), SetStatus is
+// called so the change propagates to proxy-wide SSE subscribers.
+// The goroutine exits when ctx is cancelled.
+func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, session *KubernetesSession) {
+	backoff := 2 * time.Second
+	const maxBackoff = 30 * time.Second
+	url := fmt.Sprintf("http://%s/events", session.Addr())
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if err := m.streamAgentAPIEvents(ctx, session, url); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("[AGENT_STATUS] Session %s: /events stream error: %v; retrying in %s", session.id, err, backoff)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+}
+
+// streamAgentAPIEvents connects to the agentapi backend's /events SSE endpoint and
+// maps status_change events to proxy-level session status changes.
+// Returns when the stream ends or the context is cancelled.
+func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, session *KubernetesSession, url string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d from /events", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	var eventType string
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		line := scanner.Text()
+		if line == "" {
+			eventType = ""
+			continue
+		}
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			switch eventType {
+			case "status_change":
+				var body struct {
+					Status string `json:"status"`
+				}
+				if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
+					continue
+				}
+				switch body.Status {
+				case "running":
+					session.SetStatus("running")
+					log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
+				case "stable":
+					session.SetStatus("active")
+					log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+				}
+			case "message_update":
+				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
+				m.broadcastMessageUpdate(session.id)
+			}
+		}
+	}
+	return scanner.Err()
+}
+
+// SetPersonalAPIKeyRepository sets the personal API key repository
+func (m *KubernetesSessionManager) SetPersonalAPIKeyRepository(repo portrepos.PersonalAPIKeyRepository) {
+	m.personalAPIKeyRepo = repo
+}
+
+// GetPersonalAPIKeyRepository returns the personal API key repository
+func (m *KubernetesSessionManager) GetPersonalAPIKeyRepository() portrepos.PersonalAPIKeyRepository {
+	return m.personalAPIKeyRepo
+}
+
+// getSessionStatusFromDeployment determines session status from Deployment state
+func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID string) string {
+	deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
+	if !m.isPVCEnabled() {
+		pod, err := m.client.CoreV1().Pods(m.namespace).Get(
+			context.Background(), deploymentName, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return "stopped"
+			}
+			return "unknown"
+		}
+		if isPodReady(pod) {
+			return "active"
+		}
+		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			return "stopped"
+		}
+		return "starting"
+	}
+
+	deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(
+		context.Background(), deploymentName, metav1.GetOptions{})
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return "stopped"
+		}
+		return "unknown"
+	}
+
+	if deployment.Status.ReadyReplicas > 0 {
+		return "active"
+	}
+	if deployment.Status.Replicas > 0 {
+		return "starting"
+	}
+	return "unhealthy"
+}
+
+func (m *KubernetesSessionManager) isSessionWorkloadReady(ctx context.Context, session *KubernetesSession) (bool, error) {
+	if m.isPVCEnabled() {
+		deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		return deployment.Status.ReadyReplicas > 0, nil
+	}
+
+	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	return isPodReady(pod), nil
+}
+
+func isPodReady(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// buildMainContainerVolumeMounts builds the volume mounts for the main container
+func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession, req *entities.RunServerRequest) []corev1.VolumeMount {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "workdir",
+			MountPath: "/home/agentapi/workdir",
+		},
+		// dot-claude EmptyDir – used by main container for Claude Code settings
+		{
+			Name:      "dot-claude",
+			MountPath: "/home/agentapi/.claude",
+		},
+		// notification subscriptions source – read by setup on startup
+		{
+			Name:      "notification-subscriptions-source",
+			MountPath: "/notification-subscriptions-source",
+			ReadOnly:  true,
+		},
+	}
+
+	// session-settings Secret – optional mount for Pod restart auto-provisioning.
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "session-settings",
+		MountPath: "/session-settings",
+		ReadOnly:  true,
+	})
+
+	if m.sciaSessionSidecarEnabled(req) {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "scia-mitm-ca",
+			MountPath: "/etc/scia/mitm",
+			ReadOnly:  true,
+		})
+	}
+
+	// Add webhook payload volume mount if webhook payload is provided
+	if len(session.WebhookPayload()) > 0 {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "webhook-payload",
+			MountPath: "/opt/webhook/payload.json",
+			SubPath:   "payload.json",
+			ReadOnly:  true,
+		})
+	}
+
+	return volumeMounts
+}
+
+// restoreSessionFromService restores a session from Kubernetes Service
+// This is used to recover sessions after agentapi-proxy restart
+func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service) *KubernetesSession {
+	sessionID := svc.Labels["agentapi.proxy/session-id"]
+	userID := svc.Labels["agentapi.proxy/user-id"]
+
+	// Restore tags from labels
+	tags := make(map[string]string)
+	for k, v := range svc.Labels {
+		if strings.HasPrefix(k, "agentapi.proxy/tag-") {
+			tagKey := strings.TrimPrefix(k, "agentapi.proxy/tag-")
+			tags[tagKey] = v
+		}
+	}
+
+	// Restore scope from labels
+	scope := entities.ResourceScope(svc.Labels["agentapi.proxy/scope"])
+	if scope == "" {
+		scope = entities.ScopeUser // Default to user scope for backward compatibility
+	}
+	// Restore team_id from annotations (original unsanitized value)
+	// Labels contain only the hash for querying purposes
+	teamID := svc.Annotations["agentapi.proxy/team-id"]
+
+	// Restore initial message: prefer Service annotation (written at creation, immediately
+	// available across all proxy replicas) and fall back to the settings Secret (written
+	// asynchronously after provisioning completes).
+	restoreCtx := context.Background()
+	initialMessage := svc.Annotations["agentapi.proxy/initial-message"]
+	if initialMessage == "" {
+		initialMessage = m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	}
+	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
+
+	// Extract MemoryKey, Teams, and Oneshot from session meta if available
+	var memoryKey map[string]string
+	var teams []string
+	var oneshot bool
+	if sessionMeta != nil {
+		memoryKey = sessionMeta.MemoryKey
+		teams = sessionMeta.Teams
+		oneshot = sessionMeta.Oneshot
+	}
+
+	// Parse created-at from annotations
+	createdAt := time.Now()
+	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			createdAt = parsed
+		}
+	}
+
+	// Parse updated-at from annotations
+	updatedAt := createdAt // Default to createdAt if not set
+	if updatedAtStr, ok := svc.Annotations["agentapi.proxy/updated-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, updatedAtStr); err == nil {
+			updatedAt = parsed
+		}
+	}
+
+	// Parse last-message-at from annotations (fallback to slack-last-message-at for backward compat)
+	lastMessageAt := createdAt // Default to createdAt if not set
+	for _, key := range []string{"agentapi.proxy/last-message-at", "agentapi.proxy/slack-last-message-at"} {
+		if v, ok := svc.Annotations[key]; ok && v != "" {
+			if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+				lastMessageAt = parsed
+				break
+			}
+		}
+	}
+
+	// Extract service port
+	servicePort := m.k8sConfig.BasePort
+	if len(svc.Spec.Ports) > 0 {
+		servicePort = int(svc.Spec.Ports[0].Port)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Parse session-ttl annotation if present
+	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+	agentType := restoreAgentTypeFromService(svc)
+
+	// Create session using constructor
+	session := NewKubernetesSession(
+		sessionID,
+		&entities.RunServerRequest{
+			UserID:         userID,
+			Tags:           tags,
+			Scope:          scope,
+			TeamID:         teamID,
+			InitialMessage: initialMessage,
+			MemoryKey:      memoryKey,
+			Teams:          teams,
+			Oneshot:        oneshot,
+			SessionTTL:     sessionTTL,
+			AgentType:      agentType,
+		},
+		fmt.Sprintf("agentapi-session-%s", sessionID),
+		svc.Name,
+		fmt.Sprintf("agentapi-session-%s-pvc", sessionID),
+		m.namespace,
+		servicePort,
+		cancel,
+		nil, // No webhook payload for restored sessions
+	)
+	// Set restored values
+	session.SetStartedAt(createdAt)
+	session.SetUpdatedAt(updatedAt)
+	session.SetLastMessageAt(lastMessageAt)
+	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
+	session.SetDescription(initialMessage) // Cache initial message as description
+	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
+
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
+	// Add to memory map
+	m.mutex.Lock()
+	m.sessions[sessionID] = session
+	m.mutex.Unlock()
+
+	// Start watching deployment health and agentapi runtime status.
+	go m.watchDeploymentStatus(ctx, session)
+	go m.watchAgentAPIStatus(ctx, session)
+
+	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
+
+	return session
+}
+
+// restoreSessionFromServiceWithWorkload restores a session from Kubernetes Service
+// using a pre-fetched workload to avoid additional API calls.
+func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *corev1.Service, deployment *appsv1.Deployment, pod *corev1.Pod) *KubernetesSession {
+	sessionID := svc.Labels["agentapi.proxy/session-id"]
+	userID := svc.Labels["agentapi.proxy/user-id"]
+
+	// Restore tags from labels
+	tags := make(map[string]string)
+	for k, v := range svc.Labels {
+		if strings.HasPrefix(k, "agentapi.proxy/tag-") {
+			tagKey := strings.TrimPrefix(k, "agentapi.proxy/tag-")
+			tags[tagKey] = v
+		}
+	}
+
+	// Restore scope from labels
+	scope := entities.ResourceScope(svc.Labels["agentapi.proxy/scope"])
+	if scope == "" {
+		scope = entities.ScopeUser // Default to user scope for backward compatibility
+	}
+	// Restore team_id from annotations (original unsanitized value)
+	// Labels contain only the hash for querying purposes
+	teamID := svc.Annotations["agentapi.proxy/team-id"]
+
+	// Restore initial message: prefer Service annotation (written at creation, immediately
+	// available across all proxy replicas) and fall back to the settings Secret (written
+	// asynchronously after provisioning completes).
+	restoreCtx := context.Background()
+	initialMessage := svc.Annotations["agentapi.proxy/initial-message"]
+	if initialMessage == "" {
+		initialMessage = m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	}
+	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
+
+	// Extract MemoryKey, Teams, and Oneshot from session meta if available
+	var memoryKey map[string]string
+	var teams []string
+	var oneshot bool
+	if sessionMeta != nil {
+		memoryKey = sessionMeta.MemoryKey
+		teams = sessionMeta.Teams
+		oneshot = sessionMeta.Oneshot
+	}
+
+	// Parse created-at from annotations
+	createdAt := time.Now()
+	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			createdAt = parsed
+		}
+	}
+
+	// Parse updated-at from annotations
+	updatedAt := createdAt // Default to createdAt if not set
+	if updatedAtStr, ok := svc.Annotations["agentapi.proxy/updated-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, updatedAtStr); err == nil {
+			updatedAt = parsed
+		}
+	}
+
+	// Parse last-message-at from annotations (fallback to slack-last-message-at for backward compat)
+	lastMessageAt := createdAt // Default to createdAt if not set
+	for _, key := range []string{"agentapi.proxy/last-message-at", "agentapi.proxy/slack-last-message-at"} {
+		if v, ok := svc.Annotations[key]; ok && v != "" {
+			if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+				lastMessageAt = parsed
+				break
+			}
+		}
+	}
+
+	// Extract service port
+	servicePort := m.k8sConfig.BasePort
+	if len(svc.Spec.Ports) > 0 {
+		servicePort = int(svc.Spec.Ports[0].Port)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Parse session-ttl annotation if present
+	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+	agentType := restoreAgentTypeFromService(svc)
+
+	// Create session using constructor
+	session := NewKubernetesSession(
+		sessionID,
+		&entities.RunServerRequest{
+			UserID:         userID,
+			Tags:           tags,
+			Scope:          scope,
+			TeamID:         teamID,
+			InitialMessage: initialMessage,
+			MemoryKey:      memoryKey,
+			Teams:          teams,
+			Oneshot:        oneshot,
+			SessionTTL:     sessionTTL,
+			AgentType:      agentType,
+		},
+		fmt.Sprintf("agentapi-session-%s", sessionID),
+		svc.Name,
+		fmt.Sprintf("agentapi-session-%s-pvc", sessionID),
+		m.namespace,
+		servicePort,
+		cancel,
+		nil, // No webhook payload for restored sessions
+	)
+	// Set restored values
+	session.SetStartedAt(createdAt)
+	session.SetUpdatedAt(updatedAt)
+	session.SetLastMessageAt(lastMessageAt)
+	status := m.getStatusFromWorkloadObject(deployment, pod)
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" && deployment == nil && pod == nil {
+		status = "suspended"
+	}
+	session.SetStatus(status)
+	session.SetDescription(initialMessage) // Cache initial message as description
+	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
+
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
+	// Add to memory map
+	m.mutex.Lock()
+	m.sessions[sessionID] = session
+	m.mutex.Unlock()
+
+	// Start watching workload health and agentapi runtime status.
+	if status != "suspended" {
+		go m.watchDeploymentStatus(ctx, session)
+		go m.watchAgentAPIStatus(ctx, session)
+	}
+
+	log.Printf("[K8S_SESSION] Restored session %s from Service (with pre-fetched workload)", sessionID)
+
+	return session
+}
+
+// getStatusFromWorkloadObject determines session status from a pre-fetched workload object.
+func (m *KubernetesSessionManager) getStatusFromWorkloadObject(deployment *appsv1.Deployment, pod *corev1.Pod) string {
+	if !m.isPVCEnabled() {
+		if pod == nil {
+			return "stopped"
+		}
+		if isPodReady(pod) {
+			return "active"
+		}
+		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			return "stopped"
+		}
+		return "starting"
+	}
+
+	if deployment == nil {
+		return "stopped"
+	}
+
+	if deployment.Status.ReadyReplicas > 0 {
+		return "active"
+	}
+	if deployment.Status.Replicas > 0 {
+		return "starting"
+	}
+	return "unhealthy"
+}
+
+// ensureOtelcolConfigMap creates or updates the OpenTelemetry Collector ConfigMap
+func (m *KubernetesSessionManager) ensureOtelcolConfigMap(ctx context.Context) error {
+	if !m.k8sConfig.OtelCollectorEnabled {
+		return nil
+	}
+
+	configMapName := "otelcol-config"
+	scrapeInterval := "15s"
+	if m.k8sConfig.OtelCollectorScrapeInterval != "" {
+		scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
+	}
+	claudeCodePort := 9464
+	if m.k8sConfig.OtelCollectorClaudeCodePort > 0 {
+		claudeCodePort = m.k8sConfig.OtelCollectorClaudeCodePort
+	}
+	exporterPort := 9090
+	if m.k8sConfig.OtelCollectorExporterPort > 0 {
+		exporterPort = m.k8sConfig.OtelCollectorExporterPort
+	}
+
+	otelConfig := fmt.Sprintf(`receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'claude-code'
+          scrape_interval: %s
+          static_configs:
+            - targets: ['localhost:%d']
+
+processors:
+  resource:
+    attributes:
+      - key: user_id
+        action: delete
+      - key: session_id
+        action: delete
+  transform:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          # Rename claude-code's native labels
+          - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
+          - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
+          - delete_key(attributes, "user_id")
+          - delete_key(attributes, "session_id")
+          # Remove user_email label to prevent it from being scraped by Prometheus
+          - delete_key(attributes, "user_email")
+          # Add agentapi labels
+          - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
+          - set(attributes["agentapi_user_id"], "${env:USER_ID}")
+          - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
+          - set(attributes["agentapi_schedule_id"], "${env:SCHEDULE_ID}")
+          - set(attributes["agentapi_webhook_id"], "${env:WEBHOOK_ID}")
+          - set(attributes["agentapi_agent_type"], "${env:AGENT_TYPE}")
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:%d"
+    resource_to_telemetry_conversion:
+      enabled: false
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [resource, transform]
+      exporters: [prometheus]`, scrapeInterval, claudeCodePort, exporterPort)
+
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "otelcol",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"app.kubernetes.io/component":  "telemetry",
+			},
+		},
+		Data: map[string]string{
+			"otel-collector-config.yaml": otelConfig,
+		},
+	}
+
+	// Try to get existing ConfigMap
+	existingCM, err := m.client.CoreV1().ConfigMaps(m.namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new ConfigMap
+			_, err = m.client.CoreV1().ConfigMaps(m.namespace).Create(ctx, configMap, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to create otelcol ConfigMap: %w", err)
+			}
+			log.Printf("[K8S_SESSION] Created otelcol ConfigMap: %s", configMapName)
+			return nil
+		}
+		return fmt.Errorf("failed to get otelcol ConfigMap: %w", err)
+	}
+
+	// Update existing ConfigMap
+	existingCM.Data = configMap.Data
+	existingCM.Labels = configMap.Labels
+	_, err = m.client.CoreV1().ConfigMaps(m.namespace).Update(ctx, existingCM, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update otelcol ConfigMap: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Updated otelcol ConfigMap: %s", configMapName)
+	return nil
+}
+
+// buildServicePorts builds the service ports for the session
+func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession) []corev1.ServicePort {
+	ports := []corev1.ServicePort{
+		{
+			Name:       "http",
+			Port:       int32(session.ServicePort()),
+			TargetPort: intstr.FromInt(m.k8sConfig.BasePort),
+			Protocol:   corev1.ProtocolTCP,
+		},
+		{
+			// Expose agent-provisioner for local status and sandbox-domain queries.
+			Name:       "provisioner",
+			Port:       provisionerPort,
+			TargetPort: intstr.FromInt(provisionerPort),
+			Protocol:   corev1.ProtocolTCP,
+		},
+	}
+
+	// Add metrics port if otelcol is enabled
+	if m.k8sConfig.OtelCollectorEnabled {
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+		ports = append(ports, corev1.ServicePort{
+			Name:       "metrics",
+			Port:       int32(exporterPort),
+			TargetPort: intstr.FromInt(exporterPort),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
+	return ports
+}
+
+const (
+	sessionAnnotationPRURL       = "agentapi.proxy/session-annotation-pr-url"
+	sessionAnnotationIssueURL    = "agentapi.proxy/session-annotation-issue-url"
+	sessionAnnotationDescription = "agentapi.proxy/session-annotation-description"
+	sessionAnnotationRunningTask = "agentapi.proxy/session-annotation-running-task"
+)
+
+func sessionAnnotationsFromMap(annotations map[string]string) entities.SessionAnnotations {
+	if annotations == nil {
+		return entities.SessionAnnotations{}
+	}
+	return entities.SessionAnnotations{
+		PRURL:       annotations[sessionAnnotationPRURL],
+		IssueURL:    annotations[sessionAnnotationIssueURL],
+		Description: annotations[sessionAnnotationDescription],
+		RunningTask: annotations[sessionAnnotationRunningTask],
+	}
+}
+
+func applySessionAnnotationPatch(current entities.SessionAnnotations, patch entities.UpdateSessionAnnotationsRequest) entities.SessionAnnotations {
+	if patch.PRURL != nil {
+		current.PRURL = *patch.PRURL
+	}
+	if patch.IssueURL != nil {
+		current.IssueURL = *patch.IssueURL
+	}
+	if patch.Description != nil {
+		current.Description = *patch.Description
+	}
+	if patch.RunningTask != nil {
+		current.RunningTask = *patch.RunningTask
+	}
+	return current
+}
+
+func setSessionAnnotationValue(annotations map[string]string, key, value string) {
+	if value == "" {
+		delete(annotations, key)
+		return
+	}
+	annotations[key] = value
+}
+
+// UpdateSessionAnnotations updates user-managed annotations on a session's Service.
+func (m *KubernetesSessionManager) UpdateSessionAnnotations(ctx context.Context, sessionID string, patch entities.UpdateSessionAnnotationsRequest) (entities.SessionAnnotations, error) {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return entities.SessionAnnotations{}, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return entities.SessionAnnotations{}, fmt.Errorf("session is not a KubernetesSession")
+	}
+
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return entities.SessionAnnotations{}, fmt.Errorf("failed to get service: %w", err)
+	}
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+
+	updated := applySessionAnnotationPatch(sessionAnnotationsFromMap(svc.Annotations), patch)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationPRURL, updated.PRURL)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationIssueURL, updated.IssueURL)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationDescription, updated.Description)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationRunningTask, updated.RunningTask)
+
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{}); err != nil {
+		return entities.SessionAnnotations{}, fmt.Errorf("failed to update service annotations: %w", err)
+	}
+
+	ks.SetAnnotations(updated)
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(ctx, m.namespace); err != nil {
+			log.Printf("[SESSION] Failed to invalidate session list cache after annotation update for %s: %v", sessionID, err)
+		}
+	}
+	return updated, nil
+}
+
+// UpdateServiceAnnotation updates a specific annotation on a session's Service
+func (m *KubernetesSessionManager) UpdateServiceAnnotation(ctx context.Context, sessionID, key, value string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session is not a KubernetesSession")
+	}
+
+	serviceName := ks.ServiceName()
+
+	// Get the current Service
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get service: %w", err)
+	}
+
+	// Update the annotation
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+	svc.Annotations[key] = value
+
+	// Update the Service
+	_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update service annotation: %w", err)
+	}
+
+	return nil
+}
+
+// GetInitialMessage retrieves the initial message from Secret for a given session
+func (m *KubernetesSessionManager) GetInitialMessage(ctx context.Context, session *KubernetesSession) string {
+	return m.getInitialMessageFromSecret(ctx, session.ServiceName())
+}
+
+// generatePersonalAPIKey generates a random API key for personal use
+// This uses the same format as team service account keys
+func generatePersonalAPIKey() (string, error) {
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", err
+	}
+	return "ap_" + hex.EncodeToString(keyBytes), nil
+}
+
+func (m *KubernetesSessionManager) ensurePersonalAPIKey(ctx context.Context, userID string) *entities.PersonalAPIKey {
+	if m.personalAPIKeyRepo == nil || userID == "" {
+		return nil
+	}
+	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
+	if err == nil && apiKey != nil {
+		return apiKey
+	}
+
+	log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", userID)
+	generatedKey, genErr := generatePersonalAPIKey()
+	if genErr != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to generate personal API key: %v", genErr)
+		return nil
+	}
+	apiKey = entities.NewPersonalAPIKey(entities.UserID(userID), generatedKey)
+	if saveErr := m.personalAPIKeyRepo.Save(ctx, apiKey); saveErr != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to save personal API key for user %s: %v", userID, saveErr)
+		return nil
+	}
+	if m.personalAPIKeyLoader != nil {
+		// Register new keys immediately so in-session callbacks can authenticate
+		// without waiting for a proxy restart and Kubernetes bootstrap.
+		if loadErr := m.personalAPIKeyLoader.LoadPersonalAPIKey(ctx, apiKey); loadErr != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to register personal API key for user %s: %v", userID, loadErr)
+		}
+	}
+	return apiKey
+}
+
+// buildSessionSettings constructs SessionSettings from RunServerRequest and session state.
+// This consolidates buildEnvVars and envFrom logic into a single unified structure.
+func (m *KubernetesSessionManager) buildSessionSettings(
+	ctx context.Context,
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+	webhookPayload []byte,
+) *sessionsettings.SessionSettings {
+	settings := &sessionsettings.SessionSettings{}
+
+	// Session metadata
+	scope := string(req.Scope)
+	if scope == "" {
+		scope = "user"
+	}
+	settings.Session = sessionsettings.SessionMeta{
+		ID:                 session.id,
+		UserID:             req.UserID,
+		Scope:              scope,
+		TeamID:             req.TeamID,
+		AgentType:          req.AgentType,
+		Oneshot:            req.Oneshot,
+		Teams:              req.Teams,
+		MemoryKey:          req.MemoryKey,
+		ResumeFrom:         req.ResumeFrom,
+		PersistenceEnabled: m.config.SessionPersistence.Backend != "",
+	}
+	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
+
+	// Build env vars (mirrors buildEnvVars logic from line 2695)
+	env := map[string]string{
+		"AGENTAPI_PORT":       fmt.Sprintf("%d", m.k8sConfig.BasePort),
+		"AGENTAPI_SESSION_ID": session.id,
+		"AGENTAPI_USER_ID":    req.UserID,
+		"HOME":                "/home/agentapi",
+		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
+	}
+	if req.ResumeFrom != "" {
+		env["AGENTAPI_RESUME_FROM"] = req.ResumeFrom
+	}
+
+	// Add Claude Code telemetry configuration
+	if m.k8sConfig.OtelCollectorEnabled {
+		env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+		env["OTEL_METRICS_EXPORTER"] = "prometheus"
+	}
+
+	// Add Team ID if in team scope
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		env["AGENTAPI_TEAM_ID"] = req.TeamID
+	}
+
+	// Add Agent Type if specified
+	if req.AgentType != "" {
+		env["AGENTAPI_AGENT_TYPE"] = req.AgentType
+	}
+
+	// Add CLAUDE_ARGS from request environment or proxy's environment
+	claudeArgs := ""
+	if req.Environment != nil {
+		if v, ok := req.Environment["CLAUDE_ARGS"]; ok {
+			claudeArgs = v
+		}
+	}
+	if claudeArgs == "" {
+		claudeArgs = os.Getenv("CLAUDE_ARGS")
+	}
+	if claudeArgs != "" {
+		env["CLAUDE_ARGS"] = claudeArgs
+	}
+
+	// Add repository info if available
+	if req.RepoInfo != nil {
+		env["AGENTAPI_REPO_FULLNAME"] = req.RepoInfo.FullName
+		env["AGENTAPI_CLONE_DIR"] = "/home/agentapi/workdir/repo"
+	}
+
+	// Add environment variables from request (except CLAUDE_ARGS which is already handled)
+	for k, v := range req.Environment {
+		if k != "CLAUDE_ARGS" {
+			env[k] = v
+		}
+	}
+
+	// Add VAPID environment variables for push notifications
+	vapidEnvVars := []string{"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_CONTACT_EMAIL"}
+	for _, envName := range vapidEnvVars {
+		if value := os.Getenv(envName); value != "" {
+			env[envName] = value
+		}
+	}
+
+	// Build list of secret names to expand into env map
+	// Pod does not have permission to read secrets, so we need to expand them here
+	var secretNames []string
+
+	if req.GithubToken != "" {
+		// When params.github_token is provided: embed token directly, no per-session secret needed
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
+		}
+		env["GITHUB_TOKEN"] = req.GithubToken
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided
+		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
+		}
+	}
+
+	// Expand secrets into env map (GitHub secrets only)
+	for _, secretName := range secretNames {
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+			ctx,
+			secretName,
+			metav1.GetOptions{},
+		)
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				log.Printf("[K8S_SESSION] Warning: failed to read secret %s for session settings: %v", secretName, err)
+			}
+			// Skip secrets that don't exist (they are all optional)
+			continue
+		}
+
+		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
+		for k, v := range secret.Data {
+			env[k] = string(v)
+		}
+	}
+
+	// Expand personal API key directly from repository for user-scoped sessions
+	// Treat empty scope as user scope (default behavior)
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && m.personalAPIKeyRepo != nil {
+		apiKey := m.ensurePersonalAPIKey(ctx, req.UserID)
+		if apiKey != nil {
+			env["AGENTAPI_KEY"] = apiKey.APIKey()
+			log.Printf("[K8S_SESSION] Added personal API key to session settings env for user %s", req.UserID)
+		}
+	}
+
+	// Expand team env vars directly from repository for team-scoped sessions
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.teamConfigRepo != nil {
+		teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Team config not found for team %s in session settings: %v", req.TeamID, err)
+		} else {
+			if sa := teamConfig.ServiceAccount(); sa != nil {
+				env["AGENTAPI_KEY"] = sa.APIKey()
+				log.Printf("[K8S_SESSION] Added service account API key to session settings env for team %s", req.TeamID)
+			}
+			for k, v := range teamConfig.EnvVars() {
+				env[k] = v
+			}
+		}
+	}
+
+	// Resolve and materialize settings from agentapi-settings-* Secrets.
+	// This merges env_vars, bedrock credentials, oauth token, MCP servers,
+	// marketplaces, plugins, and hooks from base → team → user → oneshot layers.
+	materialized := m.resolveSettings(ctx, session, req)
+	for k, v := range materialized.EnvVars {
+		env[k] = v
+	}
+
+	m.setTeamGitHubInstallationToken(ctx, req, env)
+
+	if req.AgentType == "pi-ollama" {
+		ensurePiOllamaSettingsEnv(env)
+	}
+
+	m.injectSciaProxyEnv(env, req)
+
+	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
+	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
+	if len(req.MemoryKey) > 0 {
+		keys := make([]string, 0, len(req.MemoryKey))
+		for k := range req.MemoryKey {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		var flags []string
+		for _, k := range keys {
+			flags = append(flags, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
+		}
+		env["MEMORY_KEY_FLAGS"] = strings.Join(flags, " ")
+
+		memoryScope := "user"
+		if req.Scope == entities.ScopeTeam {
+			memoryScope = "team"
+		}
+		env["AGENTAPI_SCOPE"] = memoryScope
+	}
+
+	// Cache the resolved API key in the session for use by the memory-sync sidecar
+	if apiKey, ok := env["AGENTAPI_KEY"]; ok && apiKey != "" {
+		session.SetResolvedAPIKey(apiKey)
+	}
+
+	// codex-acp explicitly sends its selected sandbox policy with every turn,
+	// overriding sandbox_mode from ~/.codex/config.toml. Session Pods are already
+	// isolated by agentapi-proxy, so start the adapter in its full-access mode to
+	// avoid attempting to create a nested bubblewrap sandbox.
+	if req.AgentType == "codex-acp" {
+		env["INITIAL_AGENT_MODE"] = "agent-full-access"
+	}
+
+	settings.Env = env
+
+	settings.Pi = sessionsettings.PiConfig{
+		SettingsJSON: buildPiSettingsJSON(env),
+		ModelsJSON:   buildPiModelsJSON(env),
+	}
+
+	// Claude config
+	settingsJSON := materialized.SettingsJSON
+
+	// Always inject a cycle Stop hook so that writing /tmp/check/CYCLE_ENABLED at
+	// any point activates cycling without requiring a session restart.
+	// The hook is a no-op when CYCLE_ENABLED does not exist (the cycle command exits
+	// immediately with "CYCLE_ENABLED not found"), so it is safe to register
+	// unconditionally.
+	// The hook runs the cycle command in background (nohup ... &) so that it exits
+	// immediately without blocking Claude Code's hook runner.
+	{
+		// The cycle message is stored in /tmp/check/CYCLE_ENABLED (written by the
+		// provisioner via settings.Files below when CycleMessage is set).
+		// The cycle command reads the message directly from that file.
+		innerCmd := "agentapi-proxy client cycle"
+		if req.CycleMaxCount > 0 {
+			innerCmd += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
+		}
+		// Wrap with nohup + background so the hook exits immediately (exit 0)
+		// and the actual wait+send happens asynchronously after all hooks complete.
+		command := fmt.Sprintf("nohup %s >> /tmp/cycle.log 2>&1 &", innerCmd)
+
+		cycleHookEntry := map[string]interface{}{
+			"hooks": []map[string]interface{}{
+				{"type": "command", "command": command},
+			},
+		}
+
+		if settingsJSON == nil {
+			settingsJSON = make(map[string]interface{})
+		}
+
+		hooksMap, ok := settingsJSON["hooks"].(map[string]interface{})
+		if !ok {
+			hooksMap = make(map[string]interface{})
+		}
+
+		// Merge with existing Stop hooks (e.g., from oneshot settings)
+		if existing, ok := hooksMap["Stop"].([]interface{}); ok {
+			hooksMap["Stop"] = append(existing, cycleHookEntry)
+		} else {
+			hooksMap["Stop"] = []interface{}{cycleHookEntry}
+		}
+
+		settingsJSON["hooks"] = hooksMap
+		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
+	}
+
+	settings.Claude = sessionsettings.ClaudeConfig{
+		ClaudeJSON: map[string]interface{}{
+			"hasCompletedOnboarding":        true,
+			"bypassPermissionsModeAccepted": true,
+		},
+		SettingsJSON: settingsJSON,
+		MCPServers:   materialized.MCPServers,
+	}
+
+	// For Codex ACP sessions, populate Codex-specific config.
+	switch req.AgentType {
+	case "codex-acp":
+		settings.Codex = sessionsettings.CodexConfig{
+			HooksJSON: buildCodexHooksJSON(settingsJSON),
+			// Bypass permission prompts and disable Codex's own sandbox.
+			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
+			// sandbox is redundant and causes spurious permission requests.
+			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+			MCPServers: materialized.MCPServers,
+		}
+		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
+	}
+
+	// Repository info
+	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {
+		settings.Repository = &sessionsettings.RepositoryConfig{
+			FullName: req.RepoInfo.FullName,
+			CloneDir: "/home/agentapi/workdir/repo",
+			Branch:   req.RepoInfo.Branch,
+			PR:       req.RepoInfo.PR,
+		}
+	}
+
+	// Initial message
+	settings.InitialMessage = req.InitialMessage
+
+	// Webhook payload
+	if len(webhookPayload) > 0 {
+		settings.WebhookPayload = string(webhookPayload)
+	}
+
+	// GitHub config
+	if req.GithubToken != "" {
+		settings.Github = &sessionsettings.GithubConfig{
+			Token:            req.GithubToken,
+			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
+		}
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		settings.Github = &sessionsettings.GithubConfig{
+			SecretName:       m.k8sConfig.GitHubSecretName,
+			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
+		}
+	}
+
+	// Startup command (simplified version for now - full command logic in pod)
+	switch req.AgentType {
+	case "claude-acp":
+		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--",
+				"bunx", "@agentclientprotocol/claude-agent-acp",
+			},
+		}
+		// Bypass permission prompts for claude-acp sessions so tool calls
+		// proceed without waiting for user approval.
+		if settingsJSON == nil {
+			settingsJSON = make(map[string]interface{})
+		}
+		settingsJSON["permissions"] = map[string]interface{}{
+			"defaultMode": "bypassPermissions",
+		}
+	case "codex-acp":
+		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
+		// https://github.com/agentclientprotocol/codex-acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
+				"--",
+				"npx", "-y", "@agentclientprotocol/codex-acp",
+			},
+		}
+	case "pi-ollama":
+		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
+		// https://github.com/svkozak/pi-acp
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
+				"--",
+				"npx", "-y", "pi-acp",
+			},
+			PreScript: piOllamaInstallPreScript,
+		}
+	case "cursor":
+		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.
+		// https://cursor.com/docs/cli/acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
+				"--raw-json-log",
+				"--",
+				"agent", "acp",
+			},
+		}
+	default:
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi", "server"},
+			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		}
+	}
+
+	// Slack integration: embed SlackParams so the provisioner can launch
+	// claude-posts as a subprocess. This enables stock sessions (which have no
+	// slack-integration sidecar) to forward agent output to Slack.
+	// Use per-bot token secret if provided, fall back to server default.
+	if req.SlackParams != nil && req.SlackParams.Channel != "" {
+		slackSecretName := req.SlackParams.BotTokenSecretName
+		if slackSecretName == "" {
+			slackSecretName = m.k8sConfig.SlackBotTokenSecretName
+		}
+		if slackSecretName != "" {
+			botTokenSecretKey := req.SlackParams.BotTokenSecretKey
+			if botTokenSecretKey == "" {
+				botTokenSecretKey = m.k8sConfig.SlackBotTokenSecretKey
+			}
+			if botTokenSecretKey == "" {
+				botTokenSecretKey = defaultSlackBotTokenSecretKey
+			}
+			secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+				ctx,
+				slackSecretName,
+				metav1.GetOptions{},
+			)
+			if err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to read Slack bot token secret %s for session %s: %v",
+					slackSecretName, session.id, err)
+			} else {
+				botToken := string(secret.Data[botTokenSecretKey])
+				if botToken != "" {
+					settings.SlackParams = &sessionsettings.SlackParams{
+						Channel:  req.SlackParams.Channel,
+						ThreadTS: req.SlackParams.ThreadTS,
+						BotToken: botToken,
+					}
+					log.Printf("[K8S_SESSION] SlackParams embedded in session settings for session %s (channel: %s, secret: %s)",
+						session.id, req.SlackParams.Channel, slackSecretName)
+				} else {
+					log.Printf("[K8S_SESSION] Warning: Slack bot token secret %s key %s is empty for session %s",
+						slackSecretName, botTokenSecretKey, session.id)
+				}
+			}
+		}
+	}
+
+	// OtelCollector in-process config: otelcol always runs as a subprocess inside
+	// the agentapi container, started by the provisioner after user context is known.
+	// This ensures metrics labels are correct even with the stock inventory feature.
+	if m.k8sConfig.OtelCollectorEnabled {
+		scrapeInterval := "15s"
+		if m.k8sConfig.OtelCollectorScrapeInterval != "" {
+			scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
+		}
+		claudeCodePort := 9464
+		if m.k8sConfig.OtelCollectorClaudeCodePort > 0 {
+			claudeCodePort = m.k8sConfig.OtelCollectorClaudeCodePort
+		}
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+
+		scheduleID := "-"
+		webhookID := "-"
+		if req.Tags != nil {
+			if v := req.Tags["schedule_id"]; v != "" {
+				scheduleID = v
+			}
+			if v := req.Tags["webhook_id"]; v != "" {
+				webhookID = v
+			}
+		}
+		agentType := req.AgentType
+		if agentType == "" {
+			agentType = "-"
+		}
+		teamID := "-"
+		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			teamID = req.TeamID
+		}
+
+		settings.OtelCollector = &sessionsettings.OtelCollectorConfig{
+			Enabled:        true,
+			ScrapeInterval: scrapeInterval,
+			ClaudeCodePort: claudeCodePort,
+			ExporterPort:   exporterPort,
+			SessionID:      session.id,
+			UserID:         req.UserID,
+			TeamID:         teamID,
+			ScheduleID:     scheduleID,
+			WebhookID:      webhookID,
+			AgentType:      agentType,
+		}
+		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
+	}
+
+	// Embed managed files from the selected credential owner so that
+	// stock pool pods (which have no user-specific volume mounts) can restore files
+	// on startup via the provision endpoint payload.
+	// Empty CredentialSource preserves the legacy behavior: user-scoped sessions
+	// use the session creator and team-scoped sessions receive no credentials.
+	credentialOwner := ""
+	switch req.CredentialSource {
+	case "session_user":
+		credentialOwner = req.UserID
+	case "team":
+		credentialOwner = req.TeamID
+	case "none":
+		// Explicitly disabled.
+	case "":
+		if req.Scope == entities.ScopeUser || req.Scope == "" {
+			credentialOwner = req.UserID
+		}
+	default:
+		log.Printf("[K8S_SESSION] Warning: unknown credential_source %q for session %s; credentials disabled", req.CredentialSource, session.id)
+	}
+	if credentialOwner != "" {
+		filesSecretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(credentialOwner))
+		filesSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, filesSecretName, metav1.GetOptions{})
+		if err == nil && len(filesSecret.Data) > 0 {
+			settings.Files = sessionsettings.SecretDataToFiles(filesSecret.Data)
+			if len(settings.Files) == 0 {
+				// Secret exists and has data but no valid index-based entries were parsed.
+				// This could indicate corrupted or manually edited Secret data.
+				log.Printf("[K8S_SESSION] WARNING: Secret %s has %d data entries but SecretDataToFiles returned empty for session %s",
+					filesSecretName, len(filesSecret.Data), session.id)
+			} else {
+				log.Printf("[K8S_SESSION] Embedded %d managed file(s) from Secret %s for session %s",
+					len(settings.Files), filesSecretName, session.id)
+			}
+		}
+		// Not found or no data is normal (user hasn't logged in yet); skip silently.
+	}
+
+	// User-managed files retain their existing user-scope-only behavior; the
+	// credential selector above controls authentication files only.
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
+		userFilesSecretName := fmt.Sprintf("agentapi-user-files-%s", sanitizeLabelValue(req.UserID))
+		userFilesSecret, userFilesErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, userFilesSecretName, metav1.GetOptions{})
+		if userFilesErr == nil && len(userFilesSecret.Data) > 0 {
+			userManagedFiles := userFilesSecretDataToManagedFiles(userFilesSecret.Data)
+			if len(userManagedFiles) > 0 {
+				settings.Files = append(settings.Files, userManagedFiles...)
+				log.Printf("[K8S_SESSION] Embedded %d user file(s) from Secret %s for session %s",
+					len(userManagedFiles), userFilesSecretName, session.id)
+			}
+		}
+	}
+
+	// When CycleMessage is set, write the message into /tmp/check/CYCLE_ENABLED so
+	// the provisioner creates it on startup.  The cycle command reads the message
+	// directly from this file, so no message argument is needed in the Stop hook.
+	// Deleting CYCLE_ENABLED (done by the agent when the goal is met, or when
+	// --max-count is reached) disables further cycles without any extra marker file.
+	if req.CycleMessage != "" {
+		settings.Files = append(settings.Files, sessionsettings.ManagedFile{
+			Path:    "/tmp/check/CYCLE_ENABLED",
+			Content: req.CycleMessage,
+		})
+		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file (with message) for session %s", session.id)
+	}
+
+	// Embed sandbox configuration - always enabled.
+	// Sandbox (network filter) cannot be opted out.
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true}
+	} else {
+		req.Sandbox.Enabled = true
+	}
+	effectiveSandbox := m.resolveSandboxParams(ctx, req)
+	settings.Sandbox = &sessionsettings.SandboxConfig{
+		Enabled:        true,
+		PolicyID:       req.Sandbox.PolicyID,
+		AllowedDomains: effectiveSandbox.AllowedDomains,
+		DeniedDomains:  effectiveSandbox.DeniedDomains,
+		CountMode:      effectiveSandbox.CountMode,
+	}
+	log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v, count_mode=%t)", session.id, req.Sandbox.PolicyID, effectiveSandbox.AllowedDomains, effectiveSandbox.DeniedDomains, effectiveSandbox.CountMode)
+
+	// Embed Docker-in-Docker configuration when enabled.
+	if req.Docker != nil && req.Docker.Enabled {
+		registries := make([]sessionsettings.RegistryConfig, 0, len(req.Docker.Registries))
+		for _, r := range req.Docker.Registries {
+			registries = append(registries, sessionsettings.RegistryConfig{
+				Server:     r.Server,
+				Username:   r.Username,
+				Password:   r.Password,
+				SecretName: r.SecretName,
+				Insecure:   r.Insecure,
+			})
+		}
+		settings.Docker = &sessionsettings.DockerConfig{
+			Enabled:    true,
+			Registries: registries,
+		}
+		log.Printf("[K8S_SESSION] DinD enabled for session %s (registries: %d)", session.id, len(registries))
+	}
+
+	return settings
+}
+
+func (m *KubernetesSessionManager) setTeamGitHubInstallationToken(
+	ctx context.Context,
+	req *entities.RunServerRequest,
+	env map[string]string,
+) {
+	if req.Scope != entities.ScopeTeam || req.TeamID == "" || m.settingsRepo == nil {
+		return
+	}
+
+	teamSettings, err := m.settingsRepo.FindByName(ctx, req.TeamID)
+	if err != nil {
+		return
+	}
+	installationID := teamSettings.GitHubAppInstallationID()
+	if installationID == "" {
+		return
+	}
+	env["GITHUB_INSTALLATION_ID"] = installationID
+
+	appID := env["GITHUB_APP_ID"]
+	pem := env["GITHUB_APP_PEM"]
+	if appID == "" || pem == "" {
+		delete(env, "GITHUB_TOKEN")
+		log.Printf("[K8S_SESSION] Warning: team %s has a GitHub App installation ID but App credentials are unavailable", req.TeamID)
+		return
+	}
+
+	repoFullName := ""
+	if req.RepoInfo != nil {
+		repoFullName = req.RepoInfo.FullName
+	}
+	token, err := startup.GenerateGitHubAppTokenFromPEM(appID, installationID, []byte(pem), repoFullName)
+	if err != nil {
+		delete(env, "GITHUB_TOKEN")
+		log.Printf("[K8S_SESSION] Warning: failed to generate GitHub App token for team %s: %v", req.TeamID, err)
+		return
+	}
+
+	env["GITHUB_TOKEN"] = token
+	log.Printf("[K8S_SESSION] Added GitHub App installation token to session settings for team %s", req.TeamID)
+}
+
+func buildPiSettingsJSON(env map[string]string) map[string]interface{} {
+	settings := make(map[string]interface{})
+	for envName, settingName := range map[string]string{
+		"PI_DEFAULT_PROVIDER":       "defaultProvider",
+		"PI_DEFAULT_MODEL":          "defaultModel",
+		"PI_DEFAULT_THINKING_LEVEL": "defaultThinkingLevel",
+	} {
+		if value := strings.TrimSpace(env[envName]); value != "" {
+			settings[settingName] = value
+		}
+	}
+	return settings
+}
+
+func buildPiModelsJSON(env map[string]string) map[string]interface{} {
+	provider := strings.TrimSpace(env["PI_CUSTOM_MODEL_PROVIDER"])
+	if provider == "" {
+		provider = strings.TrimSpace(env["PI_CUSTOM_PROVIDER"])
+	}
+	modelID := strings.TrimSpace(env["PI_CUSTOM_MODEL_ID"])
+	baseURL := strings.TrimSpace(env["PI_CUSTOM_MODEL_BASE_URL"])
+	if provider == "" || modelID == "" || baseURL == "" {
+		return nil
+	}
+
+	api := strings.TrimSpace(env["PI_CUSTOM_MODEL_API"])
+	if api == "" {
+		api = "openai-completions"
+	}
+	name := strings.TrimSpace(env["PI_CUSTOM_MODEL_NAME"])
+	if name == "" {
+		name = modelID
+	}
+
+	model := map[string]interface{}{
+		"id":            modelID,
+		"name":          name,
+		"reasoning":     parsePiCustomModelBool(env["PI_CUSTOM_MODEL_REASONING"], false),
+		"input":         []interface{}{"text"},
+		"contextWindow": parsePiCustomModelInt(env["PI_CUSTOM_MODEL_CONTEXT_WINDOW"], 128000),
+		"maxTokens":     parsePiCustomModelInt(env["PI_CUSTOM_MODEL_MAX_TOKENS"], 16384),
+	}
+	providerConfig := map[string]interface{}{
+		"baseUrl": baseURL,
+		"api":     api,
+		"models":  []interface{}{model},
+	}
+
+	apiKeyEnv := strings.TrimSpace(env["PI_CUSTOM_MODEL_API_KEY_ENV"])
+	if regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(apiKeyEnv) {
+		providerConfig["apiKey"] = "$" + apiKeyEnv
+	}
+
+	return map[string]interface{}{
+		"providers": map[string]interface{}{
+			provider: providerConfig,
+		},
+	}
+}
+
+func parsePiCustomModelInt(value string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parsePiCustomModelBool(value string, fallback bool) bool {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req *entities.RunServerRequest) {
+	if m.config == nil || !m.config.Scia.Enabled {
+		return
+	}
+
+	scia := m.config.Scia
+	if !m.sciaSessionSidecarEnabled(req) {
+		if scia.Credential != "" {
+			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
+		}
+		if scia.TodoistCredential != "" {
+			env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"] = scia.TodoistCredential
+		}
+		if scia.UserNamespace != "" {
+			env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
+		}
+		if scia.PublicBaseURL != "" {
+			env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
+		}
+		return
+	}
+
+	port := scia.SessionSidecarPort
+	if port == 0 {
+		port = 18081
+	}
+	userNamespace := scia.UserNamespace
+	if userNamespace == "" {
+		userNamespace = sanitizeSciaDynamicUserID(env["AGENTAPI_USER_ID"])
+	}
+	credential := scia.Credential
+	if credential == "" && userNamespace != "" {
+		credential = userNamespace + ".google"
+	}
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	env["AGENTAPI_SCIA_PROXY_URL"] = proxyURL
+	env["HTTP_PROXY"] = proxyURL
+	env["HTTPS_PROXY"] = proxyURL
+	env["http_proxy"] = proxyURL
+	env["https_proxy"] = proxyURL
+	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
+	env["SSL_CERT_FILE"] = sciaCABundlePath
+	env["REQUESTS_CA_BUNDLE"] = sciaCABundlePath
+	env["CURL_CA_BUNDLE"] = sciaCABundlePath
+	env["GIT_SSL_CAINFO"] = sciaCABundlePath
+	env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
+	if credential != "" {
+		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
+	}
+	todoistCredential := scia.TodoistCredential
+	if todoistCredential == "" && userNamespace != "" {
+		todoistCredential = userNamespace + ".todoist"
+	}
+	if todoistCredential != "" {
+		env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"] = todoistCredential
+	}
+	if userNamespace != "" {
+		env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace
+	}
+	if scia.PublicBaseURL != "" {
+		env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
+	}
+	if scia.ProxyURL == "" {
+		return
+	}
+
+	env["AGENTAPI_SCIA_PROXY_URL"] = scia.ProxyURL
+	if env["HTTP_PROXY"] == "" {
+		env["HTTP_PROXY"] = scia.ProxyURL
+	}
+	if env["HTTPS_PROXY"] == "" {
+		env["HTTPS_PROXY"] = scia.ProxyURL
+	}
+	if env["http_proxy"] == "" {
+		env["http_proxy"] = scia.ProxyURL
+	}
+	if env["https_proxy"] == "" {
+		env["https_proxy"] = scia.ProxyURL
+	}
+	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
+}
+
+func mergeNoProxy(existing, extra string) string {
+	seen := map[string]bool{}
+	values := make([]string, 0)
+	for _, list := range []string{existing, extra} {
+		for _, part := range strings.Split(list, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" || seen[part] {
+				continue
+			}
+			seen[part] = true
+			values = append(values, part)
+		}
+	}
+	return strings.Join(values, ",")
+}
+
+// createSessionSettingsSecretFromSettings creates the unified session settings Secret
+// from a pre-built SessionSettings struct.
+// This Secret is used by agent-provisioner for auto-provisioning on Pod restart.
+func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
+	ctx context.Context,
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+	settings *sessionsettings.SessionSettings,
+) error {
+	yamlData, err := sessionsettings.MarshalYAML(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal session settings to YAML: %w", err)
+	}
+
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            secretName,
+			Namespace:       m.namespace,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(req.UserID),
+				"agentapi.proxy/resource":   "session-settings",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"settings.yaml": yamlData,
+		},
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create session settings secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created session settings Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
+// deleteSessionSettingsSecret deletes the unified session settings Secret.
+func (m *KubernetesSessionManager) deleteSessionSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete session settings secret: %w", err)
+	}
+	return nil
+}
+
+// deleteOneshotSettingsSecret deletes the oneshot settings Secret.
+// This fixes the existing bug where oneshot-settings secrets were not being cleaned up.
+func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete oneshot settings secret: %w", err)
+	}
+	return nil
+}
+
+// readSettingsPatch reads the settings.json from an agentapi-settings-* Secret
+// and returns it as a SettingsPatch. Returns nil if the secret does not exist or cannot be parsed.
+func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secretName string) *settingspatch.SettingsPatch {
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Warning: failed to read settings secret %s: %v", secretName, err)
+		}
+		return nil
+	}
+	data, ok := secret.Data["settings.json"]
+	if !ok {
+		return nil
+	}
+	patch, err := settingspatch.FromJSON(data)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to parse settings.json from secret %s: %v", secretName, err)
+		return nil
+	}
+	return &patch
+}
+
+// readSettingsPatchByName reads an agentapi settings entry through SettingsRepository.
+// The repository is responsible for storage details such as encrypted_env_vars, so
+// session startup receives plaintext values before merge/materialize.
+func (m *KubernetesSessionManager) readSettingsPatchByName(ctx context.Context, settingsName string) *settingspatch.SettingsPatch {
+	if settingsName == "" {
+		return nil
+	}
+	secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(settingsName))
+	rawPatch := m.readSettingsPatch(ctx, secretName)
+	if m.settingsRepo == nil {
+		return rawPatch
+	}
+	settings, err := m.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil {
+		return rawPatch
+	}
+	if rawPatch != nil {
+		patch := *rawPatch
+		if envVars := settings.EnvVars(); len(envVars) > 0 {
+			patch.EnvVars = cloneStringMap(envVars)
+		}
+		return &patch
+	}
+	patch := settingsToPatch(settings)
+	return &patch
+}
+
+func settingsToPatch(settings *entities.Settings) settingspatch.SettingsPatch {
+	patch := settingspatch.SettingsPatch{
+		AuthMode:        string(settings.AuthMode()),
+		OAuthToken:      settings.ClaudeCodeOAuthToken(),
+		EnvVars:         cloneStringMap(settings.EnvVars()),
+		EnabledPlugins:  append([]string(nil), settings.EnabledPlugins()...),
+		PreferredTeamID: settings.PreferredTeamID(),
+	}
+
+	if bedrock := settings.Bedrock(); bedrock != nil {
+		patch.Bedrock = &settingspatch.BedrockPatch{
+			Model:           bedrock.Model(),
+			AccessKeyID:     bedrock.AccessKeyID(),
+			SecretAccessKey: bedrock.SecretAccessKey(),
+			RoleARN:         bedrock.RoleARN(),
+			Profile:         bedrock.Profile(),
+		}
+	}
+
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		patch.MCPServers = make(map[string]*settingspatch.MCPServerPatch, len(mcpServers.Servers()))
+		for name, server := range mcpServers.Servers() {
+			patch.MCPServers[name] = &settingspatch.MCPServerPatch{
+				Type:    server.Type(),
+				URL:     server.URL(),
+				Command: server.Command(),
+				Args:    append([]string(nil), server.Args()...),
+				Env:     cloneStringMap(server.Env()),
+				Headers: cloneStringMap(server.Headers()),
+			}
+		}
+	}
+
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		patch.Marketplaces = make(map[string]*settingspatch.MarketplacePatch, len(marketplaces.Marketplaces()))
+		for name, marketplace := range marketplaces.Marketplaces() {
+			patch.Marketplaces[name] = &settingspatch.MarketplacePatch{URL: marketplace.URL()}
+		}
+	}
+
+	return patch
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// resolveSettings reads settings patches from the relevant Kubernetes Secrets
+// (base → team[] → user → oneshot) and returns materialized session configuration.
+//
+// This is the single entry point for all settings merging. It replaces the previous
+// dual-path approach (readAgentapiSettingsSecret + expandSettingsToEnv for env vars,
+// and mergeSettingsAndMCP for Claude settings JSON).
+//
+// When the user has preferred_team_id set in their personal settings, only that team's
+// settings are applied (instead of all teams). This allows users to explicitly choose
+// which team's settings (Bedrock, MCP servers, env vars, etc.) to use.
+func (m *KubernetesSessionManager) resolveSettings(
+	ctx context.Context,
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+) settingspatch.MaterializedSettings {
+	var layers []settingspatch.SettingsPatch
+
+	appendIfExists := func(secretName string) {
+		if p := m.readSettingsPatch(ctx, secretName); p != nil {
+			layers = append(layers, *p)
+		}
+	}
+	appendSettingsIfExists := func(settingsName string) {
+		if p := m.readSettingsPatchByName(ctx, settingsName); p != nil {
+			layers = append(layers, *p)
+		}
+	}
+
+	// 1. base (lowest priority)
+	if m.k8sConfig.SettingsBaseSecret != "" {
+		appendIfExists(m.k8sConfig.SettingsBaseSecret)
+	}
+
+	// 2. teams (in order)
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
+		appendSettingsIfExists(req.TeamID)
+	} else {
+		// User-scoped session: check if the user has a preferred team set
+		preferredTeamID := m.resolvePreferredTeamID(ctx, req)
+		if preferredTeamID != "" {
+			// Use only the preferred team's settings
+			log.Printf("[K8S_SESSION] Using preferred team settings: %s", preferredTeamID)
+			appendSettingsIfExists(preferredTeamID)
+		} else {
+			// Default: apply all teams in order
+			for _, team := range req.Teams {
+				appendSettingsIfExists(team)
+			}
+		}
+		// 3. user
+		if req.UserID != "" {
+			appendSettingsIfExists(req.UserID)
+		}
+	}
+
+	// 4. session profile
+	if req.ProfileMCPServers != nil && !req.ProfileMCPServers.IsEmpty() {
+		layers = append(layers, settingsToMCPProfilePatch(req.ProfileMCPServers))
+	}
+
+	// 5. oneshot (highest priority)
+	if req.Oneshot {
+		appendIfExists(fmt.Sprintf("%s-oneshot-settings", session.ServiceName()))
+	}
+
+	resolved := settingspatch.Resolve(layers...)
+	materialized, err := settingspatch.Materialize(resolved)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to materialize settings: %v", err)
+	}
+	return materialized
+}
+
+func settingsToMCPProfilePatch(servers *entities.MCPServersSettings) settingspatch.SettingsPatch {
+	patch := settingspatch.SettingsPatch{MCPServers: make(map[string]*settingspatch.MCPServerPatch)}
+	for name, server := range servers.Servers() {
+		patch.MCPServers[name] = &settingspatch.MCPServerPatch{
+			Type: server.Type(), URL: server.URL(), Command: server.Command(),
+			Args: append([]string(nil), server.Args()...), Env: cloneMCPStringMap(server.Env()),
+			Headers: cloneMCPStringMap(server.Headers()),
+		}
+	}
+	return patch
+}
+
+func cloneMCPStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+// resolvePreferredTeamID reads the user's personal settings to determine if a preferred team
+// is configured. Returns the preferred team ID if it is set and the user belongs to that team,
+// otherwise returns "".
+func (m *KubernetesSessionManager) resolvePreferredTeamID(ctx context.Context, req *entities.RunServerRequest) string {
+	if req.UserID == "" {
+		return ""
+	}
+	userPatch := m.readSettingsPatchByName(ctx, req.UserID)
+	if userPatch == nil {
+		userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+		userPatch = m.readSettingsPatch(ctx, userSecretName)
+	}
+	if userPatch == nil || userPatch.PreferredTeamID == "" {
+		return ""
+	}
+	// Security check: ensure the preferred team is one the user actually belongs to
+	for _, team := range req.Teams {
+		if team == userPatch.PreferredTeamID {
+			return userPatch.PreferredTeamID
+		}
+	}
+	log.Printf("[K8S_SESSION] Warning: preferred_team_id %q is not in user's team list, falling back to all teams", userPatch.PreferredTeamID)
+	return ""
+}
+
+// BuildRemoteProvisionSettings implements portrepos.RemoteProvisionSettingsBuilder.
+// It builds a fully-resolved SessionSettings for forwarding to an external session manager (External Session Manager).
+// All settings layers (base → team → user) are resolved so that External Session Manager can create the session
+// without needing to re-resolve secrets from its own cluster.
+func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
+	ctx context.Context,
+	sessionID string,
+	req *entities.RunServerRequest,
+) (*sessionsettings.SessionSettings, error) {
+	// Create a temporary session with the provided ID to satisfy buildSessionSettings
+	tempSession := &KubernetesSession{
+		id:          sessionID,
+		serviceName: fmt.Sprintf("agentapi-session-%s-svc", sessionID),
+	}
+	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
+	return settings, nil
+}
+
+// userFilesSecretDataToManagedFiles converts the index-based Secret data from
+// agentapi-user-files-{userID} into a slice of ManagedFile for embedding in
+// SessionSettings.Files.  Only entries that have both a non-empty path and
+// content are included.
+func userFilesSecretDataToManagedFiles(data map[string][]byte) []sessionsettings.ManagedFile {
+	// Collect unique indices.
+	indexSet := map[int]struct{}{}
+	for k := range data {
+		dot := strings.LastIndex(k, ".")
+		if dot < 0 {
+			continue
+		}
+		suffix := k[dot+1:]
+		if suffix != "id" && suffix != "name" && suffix != "path" && suffix != "content" &&
+			suffix != "permissions" && suffix != "created_at" && suffix != "updated_at" {
+			continue
+		}
+		idxStr := k[:dot]
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			continue
+		}
+		indexSet[idx] = struct{}{}
+	}
+
+	indices := make([]int, 0, len(indexSet))
+	for idx := range indexSet {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	files := make([]sessionsettings.ManagedFile, 0, len(indices))
+	for _, idx := range indices {
+		prefix := strconv.Itoa(idx)
+		path := string(data[prefix+".path"])
+		content := string(data[prefix+".content"])
+		if path == "" {
+			continue
+		}
+		files = append(files, sessionsettings.ManagedFile{
+			Path:        path,
+			Content:     content,
+			Permissions: string(data[prefix+".permissions"]),
+		})
+	}
+	return files
+}

@@ -1,0 +1,627 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/spf13/cobra"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	ctrl "sigs.k8s.io/controller-runtime"
+)
+
+// prune-orphaned-resources command flags
+var (
+	orphanedNamespace string
+	orphanedDryRun    bool
+	orphanedVerbose   bool
+	orphanedMinAge    time.Duration
+)
+
+func sessionWorkloadExists(ctx context.Context, client kubernetes.Interface, namespace, name string) (bool, error) {
+	deployment, depErr := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if depErr == nil {
+		return deployment.DeletionTimestamp == nil, nil
+	}
+	if !errors.IsNotFound(depErr) {
+		return false, depErr
+	}
+
+	pod, podErr := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if podErr == nil {
+		if pod.DeletionTimestamp != nil {
+			return false, nil
+		}
+		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			return false, nil
+		}
+		return true, nil
+	}
+	if !errors.IsNotFound(podErr) {
+		return false, podErr
+	}
+
+	return false, nil
+}
+
+var pruneOrphanedResourcesCmd = &cobra.Command{
+	Use:   "prune-orphaned-resources",
+	Short: "Delete stale Kubernetes resources left behind after a session workload was deleted",
+	Long: `Delete stale Kubernetes resources for agentapi sessions whose workload no longer exists.
+
+A session is considered orphaned when its Deployment or Pod (agentapi-session-{id})
+no longer exists but other associated resources are still present.
+This can happen when a workload is deleted manually or an incomplete cleanup
+leaves residual objects.
+
+Detection uses complementary passes so that every stale pattern is covered:
+
+  Pass 1 – Service scan:
+    Sessions whose Service (agentapi-session-{id}-svc) still exists but
+    whose workload is gone are considered orphaned.
+
+  Pass 2 – Settings Secret scan:
+    Sessions whose settings Secret (agentapi-session-{id}-settings) still
+    exists but whose workload is gone are considered orphaned.
+    This catches the case where the Service was already cleaned up but the
+    settings Secret was left behind.
+
+  Pass 3 – Provision Request Secret scan:
+    Sessions whose provision request Secret (agentapi-provision-request-{id})
+    still exists, but whose Service and settings Secret are gone and whose
+    workload is gone or terminal, are considered orphaned. This catches
+    interrupted creates and partial cleanups that happened before settings
+    Secret creation.
+
+  Pass 4 – Workload scan:
+    Sessions whose Deployment or standalone Pod still exists but whose Service
+    is gone are considered orphaned. Active workloads are only pruned after
+    --min-age to avoid racing a normal in-progress create.
+
+Results from all passes are merged and deduplicated before deletion.
+
+The following resources are deleted for each orphaned session:
+  - Deployment  agentapi-session-{id}                     (may already be gone)
+  - Pod         agentapi-session-{id}                     (may already be gone)
+  - Service     agentapi-session-{id}-svc                 (if present)
+  - PVC         agentapi-session-{id}-pvc                 (if present)
+  - Secret      agentapi-session-{id}-settings             (if present)
+  - Secret      agentapi-session-{id}-svc-webhook-payload  (if present)
+  - Secret      agentapi-session-{id}-svc-oneshot-settings (if present)
+  - Secret      agentapi-provision-request-{id}            (if present)
+
+Use --dry-run to preview what would be deleted without making any changes.
+Use --min-age to control how old an active workload without a Service must be
+before it is considered orphaned. Terminal or deleting workloads do not wait.
+
+Examples:
+  # Preview orphaned sessions (no changes)
+  agentapi-proxy helpers prune-orphaned-resources --namespace agentapi-ui --dry-run
+
+  # Delete orphaned sessions
+  agentapi-proxy helpers prune-orphaned-resources --namespace agentapi-ui
+
+  # Delete with verbose output
+  agentapi-proxy helpers prune-orphaned-resources --namespace agentapi-ui --verbose`,
+	RunE: runPruneOrphanedResources,
+}
+
+func init() {
+	pruneOrphanedResourcesCmd.Flags().StringVar(&orphanedNamespace, "namespace", "agentapi-ui",
+		"Kubernetes namespace to operate in")
+	pruneOrphanedResourcesCmd.Flags().BoolVar(&orphanedDryRun, "dry-run", false,
+		"Show what would be deleted without actually deleting")
+	pruneOrphanedResourcesCmd.Flags().BoolVarP(&orphanedVerbose, "verbose", "v", false,
+		"Verbose output")
+	pruneOrphanedResourcesCmd.Flags().DurationVar(&orphanedMinAge, "min-age", 10*time.Minute,
+		"Minimum age before pruning active workloads that have no Service")
+
+	HelpersCmd.AddCommand(pruneOrphanedResourcesCmd)
+}
+
+// orphanedSession holds the minimum information needed to delete all residual
+// resources for a single session.
+type orphanedSession struct {
+	id     string
+	source string // for logging only
+}
+
+func resourceExists(get func() error) (bool, error) {
+	err := get()
+	if err == nil {
+		return true, nil
+	}
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func oldEnoughToPrune(obj metav1.Object) bool {
+	if orphanedMinAge <= 0 {
+		return true
+	}
+	createdAt := obj.GetCreationTimestamp()
+	if createdAt.IsZero() {
+		return true
+	}
+	return time.Since(createdAt.Time) >= orphanedMinAge
+}
+
+func serviceExistsForSession(ctx context.Context, client kubernetes.Interface, namespace, sessionID string) (bool, error) {
+	svcName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	return resourceExists(func() error {
+		_, err := client.CoreV1().Services(namespace).Get(ctx, svcName, metav1.GetOptions{})
+		return err
+	})
+}
+
+func deploymentWorkloadActive(deployment appsv1.Deployment) bool {
+	return deployment.DeletionTimestamp == nil
+}
+
+func podWorkloadActive(pod corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return false
+	}
+	return pod.Status.Phase != corev1.PodFailed && pod.Status.Phase != corev1.PodSucceeded
+}
+
+func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get Kubernetes config: %w", err)
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	ctx := context.Background()
+	ns := orphanedNamespace
+
+	if orphanedDryRun {
+		fmt.Printf("[DRY-RUN] Scanning namespace: %s\n", ns)
+	} else {
+		fmt.Printf("Scanning namespace: %s\n", ns)
+	}
+
+	// seen tracks already-detected session IDs to avoid double-processing.
+	seen := make(map[string]struct{})
+	var orphanedSessions []orphanedSession
+
+	// ------------------------------------------------------------------ //
+	// Pass 1: Service-based detection
+	//   Sessions whose Service still exists but whose Deployment is gone.
+	// ------------------------------------------------------------------ //
+	svcList, err := client.CoreV1().Services(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=agentapi-session,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session services: %w", err)
+	}
+
+	fmt.Printf("Pass 1 (Service scan): found %d session service(s)\n", len(svcList.Items))
+
+	for _, svc := range svcList.Items {
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Service %s: missing agentapi.proxy/session-id label\n", svc.Name)
+			}
+			continue
+		}
+
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		exists, getErr := sessionWorkloadExists(ctx, client, ns, workloadName)
+		if getErr == nil && exists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: workload %s found\n", sessionID, workloadName)
+			}
+			continue
+		}
+
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking workload %s: %v\n", sessionID, workloadName, getErr)
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: workload %s not found (detected via Service)\n", sessionID, workloadName)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "service",
+		})
+	}
+
+	// ------------------------------------------------------------------ //
+	// Pass 2: Settings Secret-based detection
+	//   Sessions whose settings Secret still exists but whose Deployment
+	//   (and likely Service) is gone.
+	// ------------------------------------------------------------------ //
+	secretList, err := client.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/resource=session-settings",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session settings secrets: %w", err)
+	}
+
+	fmt.Printf("Pass 2 (Settings Secret scan): found %d settings secret(s)\n", len(secretList.Items))
+
+	for _, secret := range secretList.Items {
+		sessionID := secret.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Secret %s: missing agentapi.proxy/session-id label\n", secret.Name)
+			}
+			continue
+		}
+
+		// Skip if already detected via Service scan.
+		if _, alreadySeen := seen[sessionID]; alreadySeen {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] session %s: already detected in Pass 1\n", sessionID)
+			}
+			continue
+		}
+
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		exists, getErr := sessionWorkloadExists(ctx, client, ns, workloadName)
+		if getErr == nil && exists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: workload %s found\n", sessionID, workloadName)
+			}
+			continue
+		}
+
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking workload %s: %v\n", sessionID, workloadName, getErr)
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: workload %s not found (detected via Settings Secret)\n", sessionID, workloadName)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "settings-secret",
+		})
+	}
+
+	// ------------------------------------------------------------------ //
+	// Pass 3: Provision Request Secret-based detection
+	//   Sessions whose provision request Secret remains after Service and
+	//   settings Secret cleanup. To avoid racing active creates, only treat the
+	//   session as orphaned when no active workload exists.
+	// ------------------------------------------------------------------ //
+	provisionRequestList, err := client.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/provision-request=true",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list provision request secrets: %w", err)
+	}
+
+	fmt.Printf("Pass 3 (Provision Request Secret scan): found %d provision request secret(s)\n", len(provisionRequestList.Items))
+
+	for _, secret := range provisionRequestList.Items {
+		sessionID := secret.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Secret %s: missing agentapi.proxy/session-id label\n", secret.Name)
+			}
+			continue
+		}
+
+		if _, alreadySeen := seen[sessionID]; alreadySeen {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] session %s: already detected in earlier pass\n", sessionID)
+			}
+			continue
+		}
+
+		svcName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+		serviceExists, getErr := serviceExistsForSession(ctx, client, ns, sessionID)
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking Service %s: %v\n", sessionID, svcName, getErr)
+			continue
+		}
+		if serviceExists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Service %s found\n", sessionID, svcName)
+			}
+			continue
+		}
+
+		settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+		settingsExists, getErr := resourceExists(func() error {
+			_, err := client.CoreV1().Secrets(ns).Get(ctx, settingsSecretName, metav1.GetOptions{})
+			return err
+		})
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking settings Secret %s: %v\n", sessionID, settingsSecretName, getErr)
+			continue
+		}
+		if settingsExists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: settings Secret %s found\n", sessionID, settingsSecretName)
+			}
+			continue
+		}
+
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		exists, getErr := sessionWorkloadExists(ctx, client, ns, workloadName)
+		if getErr == nil && exists {
+			if oldEnoughToPrune(&secret) {
+				fmt.Printf("  [ORPHANED] session %s: provision request has no Service/settings and is older than %s (detected via Provision Request Secret)\n", sessionID, orphanedMinAge)
+				seen[sessionID] = struct{}{}
+				orphanedSessions = append(orphanedSessions, orphanedSession{
+					id:     sessionID,
+					source: "provision-request-secret",
+				})
+				continue
+			}
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: workload %s found and provision request is newer than %s\n", sessionID, workloadName, orphanedMinAge)
+			}
+			continue
+		}
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking workload %s: %v\n", sessionID, workloadName, getErr)
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: provision request remains but Service/settings/workload are gone (detected via Provision Request Secret)\n", sessionID)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "provision-request-secret",
+		})
+	}
+
+	// ------------------------------------------------------------------ //
+	// Pass 4: Workload-based detection
+	//   Sessions whose workload exists but Service is gone. Service is the
+	//   canonical session resource, so a workload without Service is unreachable
+	//   through the proxy. Active workloads wait for --min-age to avoid racing
+	//   normal create flow.
+	// ------------------------------------------------------------------ //
+	deployments, err := client.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=agentapi-session,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session deployments: %w", err)
+	}
+	pods, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=agentapi-session,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session pods: %w", err)
+	}
+
+	fmt.Printf("Pass 4 (Workload scan): found %d deployment(s), %d pod(s)\n", len(deployments.Items), len(pods.Items))
+
+	for _, deployment := range deployments.Items {
+		sessionID := deployment.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Deployment %s: missing agentapi.proxy/session-id label\n", deployment.Name)
+			}
+			continue
+		}
+		if _, alreadySeen := seen[sessionID]; alreadySeen {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] session %s: already detected in earlier pass\n", sessionID)
+			}
+			continue
+		}
+
+		serviceExists, getErr := serviceExistsForSession(ctx, client, ns, sessionID)
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking Service: %v\n", sessionID, getErr)
+			continue
+		}
+		if serviceExists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Service found for Deployment %s\n", sessionID, deployment.Name)
+			}
+			continue
+		}
+
+		if deploymentWorkloadActive(deployment) && !oldEnoughToPrune(&deployment) {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Deployment %s has no Service but is newer than %s\n", sessionID, deployment.Name, orphanedMinAge)
+			}
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: Deployment %s has no Service (detected via workload)\n", sessionID, deployment.Name)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "workload",
+		})
+	}
+
+	for _, pod := range pods.Items {
+		sessionID := pod.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Pod %s: missing agentapi.proxy/session-id label\n", pod.Name)
+			}
+			continue
+		}
+		if pod.Name != fmt.Sprintf("agentapi-session-%s", sessionID) {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Pod %s: not a standalone session Pod\n", pod.Name)
+			}
+			continue
+		}
+		if _, alreadySeen := seen[sessionID]; alreadySeen {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] session %s: already detected in earlier pass\n", sessionID)
+			}
+			continue
+		}
+
+		serviceExists, getErr := serviceExistsForSession(ctx, client, ns, sessionID)
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking Service: %v\n", sessionID, getErr)
+			continue
+		}
+		if serviceExists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Service found for Pod %s\n", sessionID, pod.Name)
+			}
+			continue
+		}
+
+		if podWorkloadActive(pod) && !oldEnoughToPrune(&pod) {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Pod %s has no Service but is newer than %s\n", sessionID, pod.Name, orphanedMinAge)
+			}
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: Pod %s has no Service (detected via workload)\n", sessionID, pod.Name)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "workload",
+		})
+	}
+
+	if len(orphanedSessions) == 0 {
+		fmt.Println("\nNo orphaned sessions found.")
+		return nil
+	}
+
+	fmt.Printf("\nFound %d orphaned session(s) in total.\n", len(orphanedSessions))
+	if orphanedDryRun {
+		fmt.Println("[DRY-RUN] The following resources would be deleted:")
+	} else {
+		fmt.Println("Deleting orphaned resources...")
+	}
+
+	var deletedTotal, wouldDeleteTotal, errCount int
+
+	for _, orphaned := range orphanedSessions {
+		id := orphaned.id
+		svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
+
+		fmt.Printf("\n  Session: %s (detected via %s)\n", id, orphaned.source)
+
+		type resource struct {
+			kind string
+			name string
+			del  func() error
+		}
+
+		deploymentName := fmt.Sprintf("agentapi-session-%s", id)
+		pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
+		settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", id)
+		webhookSecretName := fmt.Sprintf("%s-webhook-payload", svcName)
+		oneshotSecretName := fmt.Sprintf("%s-oneshot-settings", svcName)
+		provisionRequestSecretName := fmt.Sprintf("agentapi-provision-request-%s", id)
+
+		resources := []resource{
+			{
+				kind: "Deployment",
+				name: deploymentName,
+				del: func() error {
+					return client.AppsV1().Deployments(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Pod",
+				name: deploymentName,
+				del: func() error {
+					return client.CoreV1().Pods(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Service",
+				name: svcName,
+				del: func() error {
+					return client.CoreV1().Services(ns).Delete(ctx, svcName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "PVC",
+				name: pvcName,
+				del: func() error {
+					return client.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvcName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Secret (settings)",
+				name: settingsSecretName,
+				del: func() error {
+					return client.CoreV1().Secrets(ns).Delete(ctx, settingsSecretName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Secret (webhook-payload)",
+				name: webhookSecretName,
+				del: func() error {
+					return client.CoreV1().Secrets(ns).Delete(ctx, webhookSecretName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Secret (oneshot-settings)",
+				name: oneshotSecretName,
+				del: func() error {
+					return client.CoreV1().Secrets(ns).Delete(ctx, oneshotSecretName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Secret (provision-request)",
+				name: provisionRequestSecretName,
+				del: func() error {
+					return client.CoreV1().Secrets(ns).Delete(ctx, provisionRequestSecretName, metav1.DeleteOptions{})
+				},
+			},
+		}
+
+		for _, r := range resources {
+			if orphanedDryRun {
+				fmt.Printf("    [DRY-RUN] Would delete %s: %s\n", r.kind, r.name)
+				wouldDeleteTotal++
+			} else {
+				if delErr := r.del(); delErr != nil {
+					if errors.IsNotFound(delErr) {
+						if orphanedVerbose {
+							fmt.Printf("    [SKIP] %s %s: not found\n", r.kind, r.name)
+						}
+					} else {
+						fmt.Printf("    [ERROR] Failed to delete %s %s: %v\n", r.kind, r.name, delErr)
+						errCount++
+					}
+				} else {
+					fmt.Printf("    [DELETED] %s: %s\n", r.kind, r.name)
+					deletedTotal++
+				}
+			}
+		}
+	}
+
+	fmt.Println()
+
+	if orphanedDryRun {
+		fmt.Printf("Dry-run complete: %d resource(s) would be deleted across %d orphaned session(s).\n",
+			wouldDeleteTotal, len(orphanedSessions))
+		fmt.Println("Run without --dry-run to actually delete them.")
+	} else {
+		fmt.Printf("Pruning complete: %d resource(s) deleted across %d orphaned session(s).\n",
+			deletedTotal, len(orphanedSessions))
+		if errCount > 0 {
+			fmt.Printf("Errors encountered: %d\n", errCount)
+			return fmt.Errorf("%d deletion error(s) occurred", errCount)
+		}
+	}
+
+	return nil
+}

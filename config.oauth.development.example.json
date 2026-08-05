@@ -1,0 +1,44 @@
+{
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "oauth": {
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "scope": "repo workflow read:org project admin:repo_hook notifications user:email",
+        "base_url": "https://github.com",
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token"
+      },
+      "user_mapping": {
+        "default_role": "developer",
+        "default_permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"],
+        "team_role_mapping": {
+          "myorg/admins": {
+            "role": "admin",
+            "permissions": ["*"]
+          },
+          "myorg/senior-developers": {
+            "role": "senior-developer",
+            "permissions": ["read", "write", "execute", "debug", "session:create", "session:list", "session:delete", "session:access", "repo:admin"]
+          },
+          "myorg/developers": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"]
+          },
+          "myorg/reviewers": {
+            "role": "reviewer",
+            "permissions": ["read", "write", "session:create", "session:list", "session:access"]
+          },
+          "myorg/viewers": {
+            "role": "viewer",
+            "permissions": ["read", "session:list"]
+          }
+        }
+      }
+    }
+  }
+}

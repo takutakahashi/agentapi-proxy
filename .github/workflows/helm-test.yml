@@ -1,0 +1,46 @@
+name: Test Helm Chart
+
+on:
+  pull_request:
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-*.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-*.yml'
+
+jobs:
+  test-helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.18.3'
+
+      - name: Update Helm dependencies
+        run: |
+          helm dependency update helm/agentapi-proxy/
+
+      - name: Lint Helm chart
+        run: |
+          helm lint helm/agentapi-proxy/
+
+      - name: Package chart (dry-run)
+        run: |
+          helm package helm/agentapi-proxy/ --destination /tmp/
+          ls -la /tmp/agentapi-proxy-*.tgz
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-test-artifacts
+          path: |
+            /tmp/agentapi-proxy-*.tgz
+          retention-days: 7

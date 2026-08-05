@@ -1,0 +1,149 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+)
+
+func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *testing.T) {
+	req := &entities.RunServerRequest{}
+	stateDir := t.TempDir()
+	t.Setenv("AGENTAPI_WORKDIR", "/inherited/workdir")
+	t.Setenv("AGENTAPI_REPO_DIR", "/inherited/repo")
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", "/bin/true", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := m.CreateSessionDirect(context.Background(), "native-1", req, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.DeleteSession(session.ID()) })
+
+	if req.RepoInfo != nil || req.ProvisionSettings != nil {
+		t.Fatal("empty native request unexpectedly gained repository settings")
+	}
+	native := session.(*NativeSession)
+	wantHome := filepath.Join(stateDir, "sessions", "native-1", "home")
+	foundHome := false
+	foundProxyBinary := false
+	for _, value := range native.cmd.Env {
+		if value == "HOME="+wantHome {
+			foundHome = true
+		}
+		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
+			t.Fatalf("native path override was retained: %q", value)
+		}
+		if value == "AGENTAPI_PROXY_BINARY=/bin/true" {
+			foundProxyBinary = true
+		}
+	}
+	if !foundHome {
+		t.Fatalf("virtual HOME %q was not configured", wantHome)
+	}
+	if !foundProxyBinary {
+		t.Fatal("managed agentapi-proxy binary was not passed to provisioner")
+	}
+}
+
+func TestNativeProvisionerEnvironmentOverridesInheritedProxyBinary(t *testing.T) {
+	env := nativeProvisionerEnvironment(
+		[]string{"PATH=/usr/bin", "AGENTAPI_PROXY_BINARY=/usr/local/bin/agentapi-proxy"},
+		"AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/agentapi-proxy",
+	)
+	want := "AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/agentapi-proxy"
+	count := 0
+	for _, value := range env {
+		if strings.HasPrefix(value, "AGENTAPI_PROXY_BINARY=") {
+			count++
+			if value != want {
+				t.Fatalf("proxy binary = %q, want %q", value, want)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("proxy binary entry count = %d, want 1", count)
+	}
+}
+
+func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
+	stateDir := t.TempDir()
+	root := filepath.Join(stateDir, "sessions", "native-1")
+	if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	statusServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(statusServer.Close)
+	port, err := strconv.Atoi(statusServer.URL[strings.LastIndex(statusServer.URL, ":")+1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	process := exec.Command("sleep", "30")
+	process.Env = append(os.Environ(), "AGENTAPI_NATIVE_SESSION_ROOT="+root)
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Process.Kill() })
+	deadline := time.Now().Add(2 * time.Second)
+	for !nativeProcessMatchesSession(process.Process.Pid, root) {
+		if time.Now().After(deadline) {
+			t.Fatal("native process environment was not visible before timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	state := nativeSessionState{ID: "native-1", Request: &entities.RunServerRequest{UserID: "user-1", Tags: map[string]string{"allocator.os": "linux"}}, RootDir: root, AgentPort: port, ProvisionerPort: 42001, PID: process.Process.Pid, StartedAt: now, UpdatedAt: now, LastMessageAt: now, Status: "running", FilesystemSandbox: false}
+	data, _ := json.Marshal(state)
+	if err := os.WriteFile(filepath.Join(root, "runtime", "state.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := m.GetSession("native-1")
+	if s == nil || s.UserID() != "user-1" || s.Addr() != "127.0.0.1:"+strconv.Itoa(port) || s.Status() != "running" {
+		t.Fatalf("unexpected restored session: %#v", s)
+	}
+}
+
+func TestNativeSessionManagerGetMissingSessionReturnsNil(t *testing.T) {
+	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session := m.GetSession("missing"); session != nil {
+		t.Fatalf("missing session returned a non-nil interface: %#v", session)
+	}
+}
+
+func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
+	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.provisionRequests["session-1"] = &ProvisionRequest{RequestID: "request-1", SessionID: "session-1", Status: "pending"}
+	if err := m.ConnectProvisioner(context.Background(), ProvisionerConnectRequest{SessionID: "session-1", PodName: "native-worker"}); err != nil {
+		t.Fatal(err)
+	}
+	req, ok, err := m.ClaimProvisionRequest(context.Background(), "session-1", "native-worker")
+	if err != nil || !ok || req.RequestID != "request-1" {
+		t.Fatalf("claim = %#v, %v, %v", req, ok, err)
+	}
+	if _, ok, err := m.ClaimProvisionRequest(context.Background(), "session-1", "other"); err != nil || ok {
+		t.Fatalf("duplicate claim ok=%v err=%v", ok, err)
+	}
+}

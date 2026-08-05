@@ -1,0 +1,38 @@
+{
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "oauth": {
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "scope": "repo workflow read:org project admin:repo_hook notifications user:email",
+        "base_url": "https://github.com",
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token"
+      },
+      "user_mapping": {
+        "default_role": "user",
+        "default_permissions": ["read", "session:create", "session:list"],
+        "team_role_mapping": {
+          "myorg/admins": {
+            "role": "admin",
+            "permissions": ["*"],
+            "env_file": "/etc/agentapi/envs/admin.env"
+          },
+          "myorg/developers": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"],
+            "env_file": "/etc/agentapi/envs/developer.env"
+          },
+          "myorg/viewers": {
+            "role": "viewer",
+            "permissions": ["read", "session:list"]
+          }
+        }
+      }
+    }
+  }
+}

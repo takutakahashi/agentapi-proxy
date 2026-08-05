@@ -1,0 +1,124 @@
+{{- $scia := .Values.scia | default dict }}
+{{- $sciaEnabled := true }}
+{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+{{- $sciaEnabled = $scia.enabled }}
+{{- end }}
+{{- if $sciaEnabled }}
+{{- $oauth := $scia.oauth | default dict }}
+{{- $google := $oauth.google | default dict }}
+{{- $googleCredential := $scia.credential | default "" }}
+{{- $googleEnabled := ne $googleCredential "" }}
+{{- $todoist := $oauth.todoist | default dict }}
+{{- $todoistEnabled := $todoist.enabled | default false }}
+{{- $dynamicUserSecretNamePrefix := $scia.dynamicUserSecretNamePrefix | default "scia-oauth-" }}
+{{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
+{{- $sciaHost := .Values.config.hostname | default "" }}
+{{- if .Values.global }}
+  {{- $sciaHost = .Values.global.apiHostname | default $sciaHost }}
+{{- end }}
+{{- if and (eq $sciaHost "") .Values.ingress.hosts }}
+  {{- $sciaHost = (index .Values.ingress.hosts 0).host }}
+{{- end }}
+{{- if and (eq $sciaPublicBaseURL "") $sciaHost }}
+  {{- $sciaPublicBaseURL = printf "https://%s" $sciaHost }}
+{{- end }}
+{{- $redirectURL := $oauth.redirectUrl | default "" }}
+{{- if and (eq $redirectURL "") $sciaPublicBaseURL }}
+  {{- $redirectURL = printf "%s/oauth/google/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+{{- end }}
+{{- $todoistRedirectURL := $todoist.redirectUrl | default "" }}
+{{- if and (eq $todoistRedirectURL "") $sciaPublicBaseURL }}
+  {{- $todoistRedirectURL = printf "%s/api/oauth/todoist/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+{{- end }}
+{{- if $todoist.omitRedirectUrl }}
+  {{- $todoistRedirectURL = "" }}
+{{- end }}
+{{- $integrations := dict }}
+{{- if $googleEnabled }}
+  {{- $googleIntegration := dict "name" ($google.name | default "Google") "setup" ($google.setup | default dict) }}
+  {{- with $google.iconUrl }}
+    {{- $_ := set $googleIntegration "iconUrl" . }}
+  {{- end }}
+  {{- with $google.description }}
+    {{- $_ := set $googleIntegration "description" . }}
+  {{- end }}
+  {{- if hasKey $google "released" }}
+    {{- $_ := set $googleIntegration "released" $google.released }}
+  {{- end }}
+  {{- with $google.scopes }}
+    {{- $_ := set $googleIntegration "scopes" . }}
+  {{- end }}
+  {{- $_ := set $integrations "google" $googleIntegration }}
+{{- end }}
+{{- if $todoistEnabled }}
+  {{- $todoistIntegration := dict "name" ($todoist.name | default "Todoist") "setup" ($todoist.setup | default dict) }}
+  {{- with ($todoist.iconUrl | default "https://todoist.com/favicon.ico") }}
+    {{- $_ := set $todoistIntegration "iconUrl" . }}
+  {{- end }}
+  {{- with $todoist.description }}
+    {{- $_ := set $todoistIntegration "description" . }}
+  {{- end }}
+  {{- if hasKey $todoist "released" }}
+    {{- $_ := set $todoistIntegration "released" $todoist.released }}
+  {{- end }}
+  {{- with $todoist.scopes }}
+    {{- $_ := set $todoistIntegration "scopes" . }}
+  {{- end }}
+  {{- $_ := set $integrations "todoist" $todoistIntegration }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+data:
+  config.yaml: |
+    server:
+      mode: "oauth"
+      listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
+      secrets:
+        mode: kubernetes
+        kubernetes:
+          namespace: {{ .Release.Namespace | quote }}
+          dynamicUsers: true
+          dynamicUserSecretNamePrefix: {{ $dynamicUserSecretNamePrefix | quote }}
+      oauth:
+        listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
+        redirectUrl: {{ $redirectURL | quote }}
+        {{- if $googleEnabled }}
+        google:
+          credentialId: {{ $googleCredential | quote }}
+          clientId: "env:GOOGLE_OAUTH_CLIENT_ID"
+          clientSecret: "env:GOOGLE_OAUTH_CLIENT_SECRET"
+          scope: {{ $google.scope | default "https://www.googleapis.com/auth/calendar.readonly" | quote }}
+          {{- if $redirectURL }}
+          redirectUrl: {{ $redirectURL | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if $todoistEnabled }}
+        todoist:
+          credentialId: {{ $scia.todoistCredential | default "default.todoist" | quote }}
+          clientId: "env:TODOIST_OAUTH_CLIENT_ID"
+          clientSecret: "env:TODOIST_OAUTH_CLIENT_SECRET"
+          scope: {{ $todoist.scope | default "data:read_write" | quote }}
+          {{- if $todoistRedirectURL }}
+          redirectUrl: {{ $todoistRedirectURL | quote }}
+          {{- end }}
+        {{- end }}
+        integrations:
+{{- toYaml $integrations | nindent 10 }}
+    credentials:
+      {{- if $googleEnabled }}
+      - id: {{ $googleCredential | quote }}
+        type: google-oauth-refresh-token
+        params: {}
+      {{- end }}
+      {{- if $todoistEnabled }}
+      - id: {{ $scia.todoistCredential | default "default.todoist" | quote }}
+        type: todoist-oauth-refresh-token
+        params: {}
+      {{- end }}
+    rules: []
+{{- end }}

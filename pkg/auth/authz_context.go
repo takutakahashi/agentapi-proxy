@@ -1,0 +1,187 @@
+package auth
+
+import (
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+)
+
+// AuthorizationContext contains pre-resolved authorization information
+// This is populated by the Auth Middleware and consumed by handlers
+type AuthorizationContext struct {
+	// User information
+	User *entities.User
+
+	// Personal scope permissions
+	PersonalScope PersonalScopeAuth
+
+	// Team scope permissions
+	TeamScope TeamScopeAuth
+}
+
+// PersonalScopeAuth contains authorization info for personal (user) scope
+type PersonalScopeAuth struct {
+	// UserID of the authenticated user
+	UserID string
+
+	// CanCreate indicates if the user can create personal-scoped resources
+	CanCreate bool
+
+	// CanRead indicates if the user can read their own personal-scoped resources
+	CanRead bool
+
+	// CanUpdate indicates if the user can update their own personal-scoped resources
+	CanUpdate bool
+
+	// CanDelete indicates if the user can delete their own personal-scoped resources
+	CanDelete bool
+}
+
+// TeamScopeAuth contains authorization info for team scope
+type TeamScopeAuth struct {
+	// Teams is a list of team IDs the user belongs to (format: "org/team-slug")
+	Teams []string
+
+	// TeamPermissions maps team IDs to their permissions
+	TeamPermissions map[string]TeamPermissions
+
+	// IsAdmin indicates if the user is an admin (can access all teams)
+	IsAdmin bool
+}
+
+// TeamPermissions represents permissions for a specific team
+type TeamPermissions struct {
+	// TeamID in format "org/team-slug"
+	TeamID string
+
+	// CanCreate indicates if the user can create resources in this team
+	CanCreate bool
+
+	// CanRead indicates if the user can read resources in this team
+	CanRead bool
+
+	// CanUpdate indicates if the user can update resources in this team
+	CanUpdate bool
+
+	// CanDelete indicates if the user can delete resources in this team
+	CanDelete bool
+}
+
+// CanAccessTeam checks if the user can access the specified team
+func (a *AuthorizationContext) CanAccessTeam(teamID string) bool {
+	if a.TeamScope.IsAdmin {
+		return true
+	}
+
+	for _, team := range a.TeamScope.Teams {
+		if team == teamID {
+			return true
+		}
+	}
+	return false
+}
+
+// CanCreateInTeam checks if the user can create resources in the specified team
+func (a *AuthorizationContext) CanCreateInTeam(teamID string) bool {
+	if a.TeamScope.IsAdmin {
+		return true
+	}
+
+	if perms, ok := a.TeamScope.TeamPermissions[teamID]; ok {
+		return perms.CanCreate
+	}
+	return false
+}
+
+// CanReadInTeam checks if the user can read resources in the specified team
+func (a *AuthorizationContext) CanReadInTeam(teamID string) bool {
+	if a.TeamScope.IsAdmin {
+		return true
+	}
+
+	if perms, ok := a.TeamScope.TeamPermissions[teamID]; ok {
+		return perms.CanRead
+	}
+	return false
+}
+
+// CanAccessResource checks if the user can access a resource based on scope
+func (a *AuthorizationContext) CanAccessResource(ownerUserID string, scope string, teamID string) bool {
+	// Team-scoped resources - admin can access all teams
+	if scope == "team" && teamID != "" {
+		if a.TeamScope.IsAdmin {
+			return true
+		}
+		return a.CanAccessTeam(teamID)
+	}
+
+	// User-scoped resources - only the owner can access, regardless of admin status
+	// Admin privileges do not extend to other users' personal resources
+	return a.PersonalScope.UserID == ownerUserID
+}
+
+// CanCreateResource checks if the user can create a resource with the given scope
+func (a *AuthorizationContext) CanCreateResource(scope string, teamID string) bool {
+	// Admin can create everywhere
+	if a.TeamScope.IsAdmin {
+		return true
+	}
+
+	// Team-scoped creation
+	if scope == "team" && teamID != "" {
+		return a.CanCreateInTeam(teamID)
+	}
+
+	// Personal-scoped creation
+	return a.PersonalScope.CanCreate
+}
+
+// CanModifyResource checks if the user can modify (update/delete) a resource
+func (a *AuthorizationContext) CanModifyResource(ownerUserID string, scope string, teamID string) bool {
+	// For now, modification follows the same logic as access
+	// In the future, we might have stricter modification rules
+	return a.CanAccessResource(ownerUserID, scope, teamID)
+}
+
+// IsServiceAccount checks if the current user is a service account
+func (a *AuthorizationContext) IsServiceAccount() bool {
+	if a.User == nil {
+		return false
+	}
+	return a.User.UserType() == entities.UserTypeServiceAccount
+}
+
+// ServiceAccountTeamID returns the team ID associated with a service account.
+// Returns an empty string if the user is not a service account or has no team.
+func (a *AuthorizationContext) ServiceAccountTeamID() string {
+	if !a.IsServiceAccount() {
+		return ""
+	}
+	if a.User == nil {
+		return ""
+	}
+	return a.User.TeamID()
+}
+
+// ResolveScope returns the effective (scope, teamID) pair for the current user.
+// For service accounts, any non-team scope is automatically routed to the
+// service account's team scope.  All other users are returned unchanged.
+func (a *AuthorizationContext) ResolveScope(scope string, teamID string) (string, string) {
+	return ResolveUserScope(a.User, scope, teamID)
+}
+
+// ResolveUserScope is the package-level variant of ResolveScope that operates
+// directly on a User entity. It can be used by controllers that only hold a
+// *entities.User rather than a full AuthorizationContext.
+func ResolveUserScope(user *entities.User, scope string, teamID string) (string, string) {
+	if user == nil || user.UserType() != entities.UserTypeServiceAccount {
+		return scope, teamID
+	}
+	// Service accounts cannot use user scope; transparently route to team scope.
+	if scope == string(entities.ScopeTeam) {
+		return scope, teamID
+	}
+	saTeamID := user.TeamID()
+	if saTeamID != "" {
+		return string(entities.ScopeTeam), saTeamID
+	}
+	return scope, teamID
+}
