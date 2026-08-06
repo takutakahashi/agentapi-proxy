@@ -72,7 +72,7 @@ func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t 
 	}
 }
 
-func TestBuildSessionSettings_TriggeredUserCredentialsFallBackToTeam(t *testing.T) {
+func TestBuildSessionSettings_GitHubSenderCredentialsFallBackToTeam(t *testing.T) {
 	tests := []struct {
 		name               string
 		triggeredUserID    string
@@ -127,7 +127,7 @@ func TestBuildSessionSettings_TriggeredUserCredentialsFallBackToTeam(t *testing.
 			manager.namespace = "test-ns"
 			req := &entities.RunServerRequest{
 				UserID: "webhook-owner", TriggeredUserID: tt.triggeredUserID,
-				Scope: entities.ScopeTeam, TeamID: "org/team-a", CredentialSource: "triggered_user",
+				Scope: entities.ScopeTeam, TeamID: "org/team-a", CredentialSource: "github_sender",
 			}
 			session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
 			settings := manager.buildSessionSettings(context.Background(), session, req, nil)
@@ -138,6 +138,46 @@ func TestBuildSessionSettings_TriggeredUserCredentialsFallBackToTeam(t *testing.
 				t.Fatalf("credential content = %q, want %q", got, tt.wantCredentialBody)
 			}
 		})
+	}
+}
+
+func TestBuildSessionSettings_GitHubSenderEnvironmentOverridesTeam(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+
+	teamSettings := entities.NewSettings("org/team-a")
+	teamSettings.SetEnvVars(map[string]string{"SHARED": "team", "TEAM_ONLY": "team-value"})
+	senderSettings := entities.NewSettings("github-user")
+	senderSettings.SetEnvVars(map[string]string{"SHARED": "sender", "SENDER_ONLY": "sender-value"})
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
+		"org/team-a":  teamSettings,
+		"github-user": senderSettings,
+	}})
+
+	req := &entities.RunServerRequest{
+		UserID: "webhook-owner", TriggeredUserID: "github-user",
+		Scope: entities.ScopeTeam, TeamID: "org/team-a", CredentialSource: "github_sender",
+	}
+	session := NewKubernetesSession("test-session", req,
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	for key, want := range map[string]string{
+		"SHARED": "sender", "TEAM_ONLY": "team-value", "SENDER_ONLY": "sender-value",
+	} {
+		if got := settings.Env[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
 	}
 }
 

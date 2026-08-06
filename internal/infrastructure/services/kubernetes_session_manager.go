@@ -2106,7 +2106,7 @@ func credentialOwnersForRequest(req *entities.RunServerRequest) []string {
 	switch req.CredentialSource {
 	case "session_user":
 		owners = append(owners, req.UserID)
-	case "triggered_user":
+	case "triggered_user", "github_sender":
 		if req.TriggeredUserID != "" {
 			owners = append(owners, req.TriggeredUserID)
 		}
@@ -5685,7 +5685,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Empty CredentialSource preserves the legacy behavior: user-scoped sessions
 	// use the session creator and team-scoped sessions receive no credentials.
 	credentialOwners := credentialOwnersForRequest(req)
-	if req.CredentialSource != "" && req.CredentialSource != "session_user" && req.CredentialSource != "triggered_user" && req.CredentialSource != "team" && req.CredentialSource != "none" {
+	if req.CredentialSource != "" && req.CredentialSource != "session_user" && req.CredentialSource != "triggered_user" && req.CredentialSource != "github_sender" && req.CredentialSource != "team" && req.CredentialSource != "none" {
 		log.Printf("[K8S_SESSION] Warning: unknown credential_source %q for session %s; credentials disabled", req.CredentialSource, session.id)
 	}
 	for _, credentialOwner := range credentialOwners {
@@ -5707,7 +5707,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				break
 			}
 		}
-		// Not found or no data is normal. For triggered_user, try the team owner next.
+		// Not found or no data is normal. Event-actor sources try the team owner next.
 	}
 
 	// User-managed files retain their existing user-scope-only behavior; the
@@ -6201,6 +6201,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
 		appendSettingsIfExists(req.TeamID)
+		if req.CredentialSource == "github_sender" && req.TriggeredUserID != "" {
+			if senderSettings := m.readSettingsPatchByName(ctx, req.TriggeredUserID); senderSettings != nil && len(senderSettings.EnvVars) > 0 {
+				layers = append(layers, settingspatch.SettingsPatch{EnvVars: cloneStringMap(senderSettings.EnvVars)})
+			}
+		}
 	} else {
 		// User-scoped session: check if the user has a preferred team set
 		preferredTeamID := m.resolvePreferredTeamID(ctx, req)

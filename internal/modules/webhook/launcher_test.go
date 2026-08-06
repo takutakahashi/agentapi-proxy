@@ -1,6 +1,10 @@
 package webhook
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+)
 
 func TestResolveTriggeredUsername(t *testing.T) {
 	tests := []struct {
@@ -10,6 +14,13 @@ func TestResolveTriggeredUsername(t *testing.T) {
 		credentialSource string
 		want             string
 	}{
+		{
+			name:             "uses github sender tag",
+			tags:             map[string]string{"github_sender": " octocat ", "username": "legacy-user"},
+			payload:          map[string]interface{}{},
+			credentialSource: "github_sender",
+			want:             "octocat",
+		},
 		{
 			name:             "uses explicit username tag",
 			tags:             map[string]string{"username": " configured-user "},
@@ -56,6 +67,17 @@ func TestResolveTriggeredUsername(t *testing.T) {
 				t.Fatalf("resolveTriggeredUsername() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveCredentialSource(t *testing.T) {
+	params := &entities.SessionParams{CredentialSource: "team"}
+
+	if got := resolveCredentialSource(map[string]string{"credential_source": " github_sender "}, params); got != "github_sender" {
+		t.Fatalf("resolveCredentialSource() = %q, want github_sender", got)
+	}
+	if got := resolveCredentialSource(map[string]string{}, params); got != "team" {
+		t.Fatalf("resolveCredentialSource() fallback = %q, want team", got)
 	}
 }
 

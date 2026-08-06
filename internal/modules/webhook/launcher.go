@@ -79,10 +79,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	if err != nil {
 		return "", false, fmt.Errorf("failed to render session params: %w", err)
 	}
-	credentialSource := ""
-	if renderedParams != nil {
-		credentialSource = renderedParams.CredentialSource
-	}
+	credentialSource := resolveCredentialSource(tags, renderedParams)
 	triggeredUsername := applyTriggeredUsernameTags(tags, params.Payload, credentialSource)
 
 	initialMessage, err := s.determineInitialMessage(sessionConfig, renderedParams, params.Payload, params.DefaultMessage)
@@ -188,23 +185,34 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	return result.SessionID, result.SessionReused, nil
 }
 
-// applyTriggeredUsernameTags resolves the username used by triggered_user
-// credentials and records it in the session tags. The explicit username tag is
-// also recorded for other credential sources, but only triggered_user uses it
-// to select credentials.
+// applyTriggeredUsernameTags resolves the external actor selected by the
+// credential source and records the canonical value in the session tags.
 func applyTriggeredUsernameTags(tags map[string]string, payload map[string]interface{}, credentialSource string) string {
 	username := resolveTriggeredUsername(tags, payload, credentialSource)
-	if username != "" && strings.TrimSpace(tags["username"]) == "" {
+	if credentialSource == "triggered_user" && username != "" && strings.TrimSpace(tags["username"]) == "" {
 		tags["username"] = username
 	}
 	tags["triggered_user_id"] = username
 	return username
 }
 
+func resolveCredentialSource(tags map[string]string, params *entities.SessionParams) string {
+	if source := strings.TrimSpace(tags["credential_source"]); source != "" {
+		return source
+	}
+	if params != nil {
+		return params.CredentialSource
+	}
+	return ""
+}
+
 // resolveTriggeredUsername uses an explicitly configured username first. When
 // triggered_user credentials are requested without one, it falls back to the
 // webhook actor: GitHub's sender, then a top-level user for custom webhooks.
 func resolveTriggeredUsername(tags map[string]string, payload map[string]interface{}, credentialSource string) string {
+	if credentialSource == "github_sender" {
+		return strings.TrimSpace(tags["github_sender"])
+	}
 	if username := strings.TrimSpace(tags["username"]); username != "" {
 		return username
 	}
@@ -301,10 +309,7 @@ func (s *WebhookSessionService) DryRunSessionConfig(params SessionCreationParams
 	if err != nil {
 		return &DryRunResult{Error: fmt.Sprintf("failed to render session params: %v", err)}, nil
 	}
-	credentialSource := ""
-	if renderedParams != nil {
-		credentialSource = renderedParams.CredentialSource
-	}
+	credentialSource := resolveCredentialSource(tags, renderedParams)
 	applyTriggeredUsernameTags(tags, params.Payload, credentialSource)
 
 	initialMessage, err := s.determineInitialMessage(sessionConfig, renderedParams, params.Payload, params.DefaultMessage)

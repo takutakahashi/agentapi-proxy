@@ -122,7 +122,7 @@ type SessionParams struct {
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
 	// CredentialSource selects which managed credentials are injected into the session.
-	// Valid values are "session_user", "triggered_user", "team", and "none". Empty preserves the
+	// Valid values are "session_user", "triggered_user", "github_sender", "team", and "none". Empty preserves the
 	// legacy behavior (session user for user scope, none for team scope).
 	CredentialSource string `json:"credential_source,omitempty"`
 }
