@@ -6202,8 +6202,12 @@ func (m *KubernetesSessionManager) resolveSettings(
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
 		appendSettingsIfExists(req.TeamID)
 		if req.CredentialSource == "github_sender" && req.TriggeredUserID != "" {
-			if senderSettings := m.readSettingsPatchByName(ctx, req.TriggeredUserID); senderSettings != nil && len(senderSettings.EnvVars) > 0 {
-				layers = append(layers, settingspatch.SettingsPatch{EnvVars: cloneStringMap(senderSettings.EnvVars)})
+			if senderSettings := m.readSettingsPatchByName(ctx, req.TriggeredUserID); senderSettings != nil {
+				layers = append(layers, settingspatch.SettingsPatch{
+					AuthMode:   senderSettings.AuthMode,
+					OAuthToken: senderSettings.OAuthToken,
+					EnvVars:    cloneStringMap(senderSettings.EnvVars),
+				})
 			}
 		}
 	} else {

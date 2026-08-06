@@ -141,7 +141,7 @@ func TestBuildSessionSettings_GitHubSenderCredentialsFallBackToTeam(t *testing.T
 	}
 }
 
-func TestBuildSessionSettings_GitHubSenderEnvironmentOverridesTeam(t *testing.T) {
+func TestBuildSessionSettings_GitHubSenderAuthAndEnvironmentOverrideTeam(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
 	})
@@ -157,8 +157,11 @@ func TestBuildSessionSettings_GitHubSenderEnvironmentOverridesTeam(t *testing.T)
 
 	teamSettings := entities.NewSettings("org/team-a")
 	teamSettings.SetEnvVars(map[string]string{"SHARED": "team", "TEAM_ONLY": "team-value"})
+	teamSettings.SetAuthMode(entities.AuthModeBedrock)
 	senderSettings := entities.NewSettings("github-user")
 	senderSettings.SetEnvVars(map[string]string{"SHARED": "sender", "SENDER_ONLY": "sender-value"})
+	senderSettings.SetAuthMode(entities.AuthModeOAuth)
+	senderSettings.SetClaudeCodeOAuthToken("sender-oauth-token")
 	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
 		"org/team-a":  teamSettings,
 		"github-user": senderSettings,
@@ -174,6 +177,7 @@ func TestBuildSessionSettings_GitHubSenderEnvironmentOverridesTeam(t *testing.T)
 
 	for key, want := range map[string]string{
 		"SHARED": "sender", "TEAM_ONLY": "team-value", "SENDER_ONLY": "sender-value",
+		"CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_OAUTH_TOKEN": "sender-oauth-token",
 	} {
 		if got := settings.Env[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
