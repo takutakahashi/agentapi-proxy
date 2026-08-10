@@ -20,6 +20,72 @@ type fakeSettingsRepository struct {
 	settings map[string]*entities.Settings
 }
 
+func TestBuildSessionSettings_EmbedsProvisionerTelemetryLabels(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false), OtelCollectorEnabled: true,
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	session := NewKubernetesSession("test-session", &entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	req := &entities.RunServerRequest{
+		UserID:    "test-user",
+		Scope:     entities.ScopeTeam,
+		TeamID:    "org/team-a",
+		AgentType: "claude",
+		Tags: map[string]string{
+			"schedule_id": "schedule-1",
+			"webhook_id":  "webhook-1",
+		},
+	}
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if settings.Telemetry == nil {
+		t.Fatal("Telemetry config is nil")
+	}
+	want := sessionsettings.TelemetryConfig{
+		Enabled: true, PrometheusPort: 9090, SessionID: "test-session", UserID: "test-user",
+		TeamID: "org/team-a", ScheduleID: "schedule-1", WebhookID: "webhook-1", AgentType: "claude",
+	}
+	if got := *settings.Telemetry; got != want {
+		t.Fatalf("Telemetry = %#v, want %#v", got, want)
+	}
+	if _, ok := settings.Env["OTEL_RESOURCE_ATTRIBUTES"]; ok {
+		t.Fatal("manager should leave OTEL_RESOURCE_ATTRIBUTES to the provisioner")
+	}
+}
+
+func TestBuildServicePorts_PreservesTelemetryExporterPort(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		k8sConfig: &config.KubernetesSessionConfig{
+			BasePort:             8080,
+			OtelCollectorEnabled: true,
+		},
+	}
+	session := &KubernetesSession{servicePort: 8080}
+
+	ports := manager.buildServicePorts(session)
+	var metricsPort *corev1.ServicePort
+	for i := range ports {
+		if ports[i].Name == "metrics" {
+			metricsPort = &ports[i]
+			break
+		}
+	}
+	if metricsPort == nil {
+		t.Fatal("metrics service port is missing")
+	}
+	if metricsPort.Port != 9090 || metricsPort.TargetPort.IntValue() != 9090 {
+		t.Fatalf("metrics port = %#v, want port and targetPort 9090", *metricsPort)
+	}
+}
+
 func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},

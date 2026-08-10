@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,7 +128,7 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 	}
 	delete(settings.Env, "AGENTAPI_SCIA_PROXY_URL")
 	delete(settings.Env, "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED")
-	settings.OtelCollector = nil
+	settings.Telemetry = nil
 	settings.Sandbox = nil
 }
 
@@ -256,6 +257,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// ── Step 3: load session env file ─────────────────────────────────────────
 	s.setPhase("provision:load-env")
 	envMap := loadEnvFile(sessionEnvFile)
+	configureTelemetry(settings, envMap)
 	log.Printf("[PROVISIONER] Loaded %d env vars from session env file", len(envMap))
 	prepareSciaCABundle(ctx, envMap)
 
@@ -302,14 +304,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 	}
 
-	// ── Step 6: start otelcol subprocess if in-process mode ──────────────────
-	// Must be started before agentapi so metrics scraping begins as soon as
-	// Claude Code starts emitting metrics on its prometheus port.
-	if settings.OtelCollector != nil && settings.OtelCollector.Enabled {
-		go s.runOtelcol(ctx, settings.OtelCollector)
-	}
-
-	// ── Step 7: build and start the agent subprocess ──────────────────────────
+	// ── Step 6: build and start the agent subprocess ──────────────────────────
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
@@ -957,105 +952,50 @@ func sanitizeCredentialSecretName(s string) string {
 	return s
 }
 
-// runOtelcol starts the OpenTelemetry Collector binary as a subprocess.
-// It is used when otelcol runs in in-process mode (OtelCollectorInProcess=true)
-// instead of as a Kubernetes sidecar. This allows otelcol to be started
-// after user context is established, so metrics labels (user_id, session_id,
-// etc.) are correctly set even when using the stock inventory feature.
-// The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
-func (s *Server) runOtelcol(ctx context.Context, cfg *sessionsettings.OtelCollectorConfig) {
-	const otelcolBin = "/usr/local/bin/otelcol"
-	const configPath = "/tmp/otelcol-config.yaml"
-
-	scrapeInterval := cfg.ScrapeInterval
-	if scrapeInterval == "" {
-		scrapeInterval = "15s"
-	}
-	claudeCodePort := cfg.ClaudeCodePort
-	if claudeCodePort == 0 {
-		claudeCodePort = 9464
-	}
-	exporterPort := cfg.ExporterPort
-	if exporterPort == 0 {
-		exporterPort = 9090
-	}
-
-	// Generate otelcol config with label values already substituted.
-	// Using Go fmt.Sprintf rather than otelcol ${env:VAR} expansion so that
-	// the correct values are used regardless of the container's own env vars
-	// (which may be unset in stock sessions at startup time).
-	otelConfig := fmt.Sprintf(`receivers:
-  prometheus:
-    config:
-      scrape_configs:
-        - job_name: 'claude-code'
-          scrape_interval: %s
-          static_configs:
-            - targets: ['localhost:%d']
-
-processors:
-  resource:
-    attributes:
-      - key: user_id
-        action: delete
-      - key: session_id
-        action: delete
-  transform:
-    error_mode: ignore
-    metric_statements:
-      - context: datapoint
-        statements:
-          # Rename claude-code's native labels
-          - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
-          - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
-          - delete_key(attributes, "user_id")
-          - delete_key(attributes, "session_id")
-          # Remove user_email label to prevent it from being scraped by Prometheus
-          - delete_key(attributes, "user_email")
-          # Add agentapi labels
-          - set(attributes["agentapi_session_id"], "%s")
-          - set(attributes["agentapi_user_id"], "%s")
-          - set(attributes["agentapi_team_id"], "%s")
-          - set(attributes["agentapi_schedule_id"], "%s")
-          - set(attributes["agentapi_webhook_id"], "%s")
-          - set(attributes["agentapi_agent_type"], "%s")
-
-exporters:
-  prometheus:
-    endpoint: "0.0.0.0:%d"
-    resource_to_telemetry_conversion:
-      enabled: false
-
-service:
-  pipelines:
-    metrics:
-      receivers: [prometheus]
-      processors: [resource, transform]
-      exporters: [prometheus]`,
-		scrapeInterval, claudeCodePort,
-		cfg.SessionID, cfg.UserID, cfg.TeamID,
-		cfg.ScheduleID, cfg.WebhookID, cfg.AgentType,
-		exporterPort)
-
-	if err := os.WriteFile(configPath, []byte(otelConfig), 0o600); err != nil {
-		log.Printf("[OTELCOL] Failed to write config to %s: %v", configPath, err)
+func configureTelemetry(settings *sessionsettings.SessionSettings, env map[string]string) {
+	if settings == nil || settings.Telemetry == nil || !settings.Telemetry.Enabled {
 		return
 	}
-	log.Printf("[OTELCOL] Config written to %s, starting otelcol subprocess", configPath)
 
-	cmd := exec.CommandContext(ctx, otelcolBin, "--config="+configPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			log.Printf("[OTELCOL] Exited due to context cancellation")
-		} else {
-			log.Printf("[OTELCOL] Exited with error: %v", err)
-		}
-	} else {
-		log.Printf("[OTELCOL] Exited normally")
+	cfg := settings.Telemetry
+	managed := map[string]string{
+		"agentapi_session_id":  cfg.SessionID,
+		"agentapi_user_id":     cfg.UserID,
+		"agentapi_team_id":     cfg.TeamID,
+		"agentapi_schedule_id": cfg.ScheduleID,
+		"agentapi_webhook_id":  cfg.WebhookID,
+		"agentapi_agent_type":  cfg.AgentType,
 	}
+
+	attributes := make([]string, 0, len(managed)+1)
+	for _, attribute := range strings.Split(env["OTEL_RESOURCE_ATTRIBUTES"], ",") {
+		attribute = strings.TrimSpace(attribute)
+		key, _, found := strings.Cut(attribute, "=")
+		_, reserved := managed[key]
+		if attribute != "" && (!found || !reserved) {
+			attributes = append(attributes, attribute)
+		}
+	}
+	for _, key := range []string{
+		"agentapi_session_id",
+		"agentapi_user_id",
+		"agentapi_team_id",
+		"agentapi_schedule_id",
+		"agentapi_webhook_id",
+		"agentapi_agent_type",
+	} {
+		attributes = append(attributes, key+"="+url.QueryEscape(managed[key]))
+	}
+
+	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+	env["OTEL_METRICS_EXPORTER"] = "prometheus"
+	env["OTEL_EXPORTER_PROMETHEUS_HOST"] = "0.0.0.0"
+	prometheusPort := cfg.PrometheusPort
+	if prometheusPort <= 0 {
+		prometheusPort = 9090
+	}
+	env["OTEL_EXPORTER_PROMETHEUS_PORT"] = strconv.Itoa(prometheusPort)
+	env["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(attributes, ",")
 }
 
 // buildAgentCommand returns the executable and arguments for the agent

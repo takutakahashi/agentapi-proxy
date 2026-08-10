@@ -675,35 +675,11 @@ kubernetesSession:
       # Defaults to "signing-secret"
       key: "signing-secret"
 
-  # OpenTelemetry Collector Configuration
-  # Enables Prometheus metrics collection from Claude Code in session pods.
-  # otelcol always runs as an in-process subprocess inside the agentapi container,
-  # started by the provisioner after user context is established. This ensures
-  # metrics labels (user_id, session_id, etc.) are correct even with stock sessions.
+  # Claude Code telemetry configuration.
+  # The legacy otelCollector name is retained for compatibility. No collector
+  # process is started; the provisioner adds agentapi resource attributes directly.
   otelCollector:
     enabled: true
-
-    # Container image for otelcol (used to pull the binary into the agentapi image)
-    image: "otel/opentelemetry-collector-contrib:0.143.1"
-
-    # Scrape interval for Claude Code metrics
-    scrapeInterval: "15s"
-
-    # Claude Code metrics port (where OTEL_METRICS_EXPORTER=prometheus exposes metrics)
-    claudeCodeMetricsPort: 9464
-
-    # Exporter port (where otelcol exposes labeled metrics)
-    exporterPort: 9090
-
-    # Resource limits are not applicable in in-process mode (otelcol shares the
-    # agentapi container resources). Kept for reference only.
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-      limits:
-        cpu: "200m"
-        memory: "256Mi"
 
 # Schedule Worker Configuration
 # Enables delayed start and recurring (cron-based) session scheduling
