@@ -2,6 +2,7 @@ package startup
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -845,6 +846,54 @@ func TestSyncMarketplaces(t *testing.T) {
 			t.Error("Expected marketplaces directory to be created")
 		}
 	})
+}
+
+func TestCloneMarketplacesConcurrently(t *testing.T) {
+	requests := []marketplaceCloneRequest{
+		{aliasKey: "first", url: "url-first", tempDir: "dir-first"},
+		{aliasKey: "second", url: "url-second", tempDir: "dir-second"},
+		{aliasKey: "third", url: "url-third", tempDir: "dir-third"},
+		{aliasKey: "fourth", url: "url-fourth", tempDir: "dir-fourth"},
+	}
+	expectedErr := errors.New("clone failed")
+
+	started := make(chan string, len(requests))
+	release := make(chan struct{})
+	cloneFn := func(url, _ string) error {
+		started <- url
+		<-release
+		if url == "url-third" {
+			return expectedErr
+		}
+		return nil
+	}
+
+	resultsChannel := make(chan []marketplaceCloneResult, 1)
+	go func() {
+		resultsChannel <- cloneMarketplacesConcurrently(requests, 2, cloneFn)
+	}()
+
+	<-started
+	<-started
+	select {
+	case unexpected := <-started:
+		t.Fatalf("clone %s started above concurrency limit", unexpected)
+	default:
+	}
+	close(release)
+	results := <-resultsChannel
+
+	if len(results) != len(requests) {
+		t.Fatalf("expected %d results, got %d", len(requests), len(results))
+	}
+	for index, result := range results {
+		if result.request != requests[index] {
+			t.Errorf("result %d does not match request order: got %+v, want %+v", index, result.request, requests[index])
+		}
+	}
+	if !errors.Is(results[2].err, expectedErr) {
+		t.Fatalf("expected third clone error %v, got %v", expectedErr, results[2].err)
+	}
 }
 
 func TestCloneMarketplace(t *testing.T) {
