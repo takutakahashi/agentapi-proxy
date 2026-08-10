@@ -383,6 +383,14 @@ func (s *Server) handleSSE(c echo.Context) error {
 	for i, msg := range history {
 		_, _ = fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", historyStartIdx+i, msg)
 	}
+	// A first-time connection has no Last-Event-ID. Replay unanswered
+	// agent-initiated requests without an SSE id so opening the chat after a
+	// prompt was emitted still shows it, without disturbing history resumption.
+	if lastEventIDStr == "" {
+		for _, msg := range s.bridge.PendingAgentRequests() {
+			_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
+		}
+	}
 	if hasFlusher {
 		flusher.Flush()
 	}

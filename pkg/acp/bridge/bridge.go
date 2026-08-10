@@ -80,9 +80,10 @@ type Bridge struct {
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
-	agentReqSeq    atomic.Int64
-	pendingReplyMu sync.Mutex
-	pendingReplies map[int64]chan json.RawMessage // local agentReqId → reply channel
+	agentReqSeq     atomic.Int64
+	pendingReplyMu  sync.Mutex
+	pendingReplies  map[int64]chan json.RawMessage // local agentReqId → reply channel
+	pendingRequests map[int64]json.RawMessage      // local agentReqId → JSON-RPC request for reconnect replay
 
 	// Chunk buffer: accumulates consecutive chunk updates of the same kind and
 	// emits them as a single batched session/update when the kind changes or the
@@ -118,6 +119,7 @@ func New(client *acp.Client, sessionId string, verbose bool, outputFile string, 
 		autoApprove:        autoApprove,
 		outputFile:         outputFile,
 		pendingReplies:     make(map[int64]chan json.RawMessage),
+		pendingRequests:    make(map[int64]json.RawMessage),
 		currentStatus:      "stable",
 		lastUserMessageIdx: -1,
 	}
@@ -357,6 +359,7 @@ func (b *Bridge) Run(ctx context.Context) {
 	b.serverCtx = ctx
 	updates := b.acp.Updates()
 	perms := b.acp.PermissionRequests()
+	elicitations := b.acp.ElicitationRequests()
 
 	for {
 		select {
@@ -374,8 +377,65 @@ func (b *Bridge) Run(ctx context.Context) {
 				return
 			}
 			b.handlePermissionRequest(req)
+
+		case req, ok := <-elicitations:
+			if !ok {
+				return
+			}
+			b.handleElicitationRequest(req)
 		}
 	}
+}
+
+// handleElicitationRequest emits an ACP form elicitation via SSE and waits for
+// the browser client to return accept, decline, or cancel via POST /rpc.
+func (b *Bridge) handleElicitationRequest(req acp.ElicitationRequest) {
+	id, replyCh := b.beginAgentRequest("session/create_elicitation", req.Params)
+
+	go func() {
+		defer b.finishAgentRequest(id)
+
+		select {
+		case <-b.serverCtx.Done():
+			_ = req.Reply(acp.CreateElicitationResult{Action: "cancel"})
+		case raw := <-replyCh:
+			var result acp.CreateElicitationResult
+			if err := json.Unmarshal(raw, &result); err != nil {
+				result = acp.CreateElicitationResult{Action: "cancel"}
+			}
+			_ = req.Reply(result)
+		}
+	}()
+}
+
+func (b *Bridge) beginAgentRequest(method string, params interface{}) (int64, chan json.RawMessage) {
+	id := b.agentReqSeq.Add(1)
+	idRaw, _ := json.Marshal(id)
+	idRawMsg := json.RawMessage(idRaw)
+	replyCh := make(chan json.RawMessage, 1)
+
+	msg := jsonRPCMsg{
+		JSONRPC: "2.0",
+		ID:      &idRawMsg,
+		Method:  method,
+		Params:  params,
+	}
+	raw, _ := json.Marshal(msg)
+
+	b.pendingReplyMu.Lock()
+	b.pendingReplies[id] = replyCh
+	b.pendingRequests[id] = raw
+	b.pendingReplyMu.Unlock()
+
+	b.broadcast(msg)
+	return id, replyCh
+}
+
+func (b *Bridge) finishAgentRequest(id int64) {
+	b.pendingReplyMu.Lock()
+	delete(b.pendingReplies, id)
+	delete(b.pendingRequests, id)
+	b.pendingReplyMu.Unlock()
 }
 
 // isChunkKind reports whether kind is a streaming chunk that should be buffered.
@@ -491,30 +551,10 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 		return
 	}
 
-	id := b.agentReqSeq.Add(1)
-	idRaw, _ := json.Marshal(id)
-	idRawMsg := json.RawMessage(idRaw)
-
-	replyCh := make(chan json.RawMessage, 1)
-
-	b.pendingReplyMu.Lock()
-	b.pendingReplies[id] = replyCh
-	b.pendingReplyMu.Unlock()
-
-	msg := jsonRPCMsg{
-		JSONRPC: "2.0",
-		ID:      &idRawMsg,
-		Method:  "session/request_permission",
-		Params:  req.Params,
-	}
-	b.broadcast(msg)
+	id, replyCh := b.beginAgentRequest("session/request_permission", req.Params)
 
 	go func() {
-		defer func() {
-			b.pendingReplyMu.Lock()
-			delete(b.pendingReplies, id)
-			b.pendingReplyMu.Unlock()
-		}()
+		defer b.finishAgentRequest(id)
 
 		select {
 		case <-b.serverCtx.Done():
@@ -612,6 +652,20 @@ func (b *Bridge) HandleReply(id int64, result json.RawMessage) error {
 	default:
 	}
 	return nil
+}
+
+// PendingAgentRequests returns the unanswered agent-initiated JSON-RPC requests.
+// A newly opened UI connection uses this snapshot to recover prompts that were
+// emitted while no SSE subscriber was connected.
+func (b *Bridge) PendingAgentRequests() []json.RawMessage {
+	b.pendingReplyMu.Lock()
+	defer b.pendingReplyMu.Unlock()
+
+	requests := make([]json.RawMessage, 0, len(b.pendingRequests))
+	for _, raw := range b.pendingRequests {
+		requests = append(requests, append(json.RawMessage(nil), raw...))
+	}
+	return requests
 }
 
 // SetSessionConfigOption forwards a session/set_config_option request to the ACP agent.

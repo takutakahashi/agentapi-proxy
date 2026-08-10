@@ -17,6 +17,8 @@ type ClientCapabilities struct {
 	Filesystem *FilesystemCapability `json:"filesystem,omitempty"`
 	// Terminal management
 	Terminal *TerminalCapability `json:"terminal,omitempty"`
+	// Structured forms initiated by the agent.
+	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
 }
 
 // AgentCapabilities describes what the agent supports.
@@ -45,6 +47,11 @@ type FilesystemCapability struct {
 // TerminalCapability indicates the client can handle terminal requests.
 type TerminalCapability struct {
 	Enabled bool `json:"enabled"`
+}
+
+// ElicitationCapability indicates which elicitation modes the client supports.
+type ElicitationCapability struct {
+	Form map[string]interface{} `json:"form"`
 }
 
 // ----------------------------------------------------------------------------
@@ -304,6 +311,8 @@ type SessionUpdate struct {
 	Title string `json:"title,omitempty"`
 
 	// current_mode_update
+	CurrentModeId string `json:"currentModeId,omitempty"`
+	// Mode is accepted for compatibility with older ACP agents.
 	Mode string `json:"mode,omitempty"`
 
 	// config_option_update
@@ -355,6 +364,8 @@ type PermissionOption struct {
 type RequestPermissionToolCall struct {
 	ToolCallId string          `json:"toolCallId"`
 	Kind       string          `json:"kind,omitempty"`     // e.g. "switch_mode" for ExitPlanMode
+	Title      string          `json:"title,omitempty"`    // human-readable tool call title
+	Content    json.RawMessage `json:"content,omitempty"`  // structured tool call content
 	RawInput   json.RawMessage `json:"rawInput,omitempty"` // raw tool input JSON
 }
 
@@ -376,6 +387,22 @@ type RequestPermissionOutcome struct {
 // The ACP spec requires: {outcome: {outcome: "selected", optionId: "<id>"}}
 type RequestPermissionResult struct {
 	Outcome RequestPermissionOutcome `json:"outcome"`
+}
+
+// CreateElicitationParams is the params for "session/create_elicitation"
+// (agent→client). RequestedSchema follows ACP's restricted JSON Schema shape.
+type CreateElicitationParams struct {
+	SessionId       string                 `json:"sessionId"`
+	ToolCallId      string                 `json:"toolCallId,omitempty"`
+	Mode            string                 `json:"mode"`
+	Message         string                 `json:"message"`
+	RequestedSchema map[string]interface{} `json:"requestedSchema,omitempty"`
+}
+
+// CreateElicitationResult is the response to "session/create_elicitation".
+type CreateElicitationResult struct {
+	Action  string                 `json:"action"`
+	Content map[string]interface{} `json:"content,omitempty"`
 }
 
 // ----------------------------------------------------------------------------
