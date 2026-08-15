@@ -171,6 +171,29 @@ func (m *KubernetesSessionManager) deleteSessionAllocation(ctx context.Context, 
 	return err
 }
 
+// DeletePendingSessionAllocation removes an allocation that has not yet been
+// claimed by a session allocator. The boolean result reports whether a pending
+// allocation was found and deleted.
+func (m *KubernetesSessionManager) DeletePendingSessionAllocation(ctx context.Context, sessionID string) (bool, error) {
+	allocation, err := m.getSessionAllocation(ctx, sessionID)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if allocation.Status != sessionallocation.StatusPending {
+		return false, nil
+	}
+	if err := m.deleteSessionAllocation(ctx, sessionID); err != nil {
+		return false, err
+	}
+	if err := m.notifySessionAllocation(ctx); err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Warning: failed to notify after deleting allocation request %s: %v", sessionID, err)
+	}
+	return true, nil
+}
+
 func (m *KubernetesSessionManager) NextSessionAllocation(ctx context.Context, wait time.Duration) (*sessionallocation.AllocationRequest, bool, error) {
 	deadline := time.Now().Add(wait)
 	for {
@@ -236,7 +259,7 @@ func (m *KubernetesSessionManager) claimNextSessionAllocation(ctx context.Contex
 	return nil, false, nil
 }
 
-func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.Context, managerID, sessionID string, settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) error {
+func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.Context, managerID, sessionID string, settings *sessionsettings.SessionSettings, req *entities.RunServerRequest, runtime *sessionallocation.RuntimeBootstrap) error {
 	if err := m.CreateProvisionRequestFromSettings(ctx, sessionID, settings); err != nil {
 		return fmt.Errorf("failed to create external provision request: %w", err)
 	}
@@ -248,6 +271,8 @@ func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.C
 		Status:            sessionallocation.StatusPending,
 		Requirements:      sessionRequirements(req),
 		UpdatedAt:         time.Now().UTC(),
+		Runtime:           runtime,
+		RuntimeProfile:    m.ExternalRuntimeProfile(),
 	}
 	if err := m.saveSessionAllocation(ctx, allocation); err != nil {
 		_ = m.deleteProvisionRequest(context.Background(), sessionID)
@@ -396,7 +421,7 @@ func (m *KubernetesSessionManager) allocationProxyURL() string {
 	if proxyURL != "" {
 		return proxyURL
 	}
-	return fmt.Sprintf("http://agentapi-proxy.%s.svc.cluster.local:8080", m.namespace)
+	return fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
 }
 
 func (m *KubernetesSessionManager) AllocationProxyURL() string {

@@ -30,10 +30,19 @@ type SessionCreator interface {
 	DeleteSessionByID(sessionID string) error
 }
 
+type pendingSessionAllocationDeleter interface {
+	DeletePendingSessionAllocation(ctx context.Context, sessionID string) (bool, error)
+}
+
 // SessionManagerProvider provides access to the session manager
 // This allows the session manager to be swapped at runtime (e.g., for testing)
 type SessionManagerProvider interface {
 	GetSessionManager() repositories.SessionManager
+}
+
+type ESMControlTunnel interface {
+	IsConnected(context.Context, string) bool
+	Do(context.Context, string, string, string, *http.Request) (*http.Response, error)
 }
 
 type sessionAnnotationUpdater interface {
@@ -44,6 +53,10 @@ type sessionAnnotationsProvider interface {
 	Annotations() entities.SessionAnnotations
 }
 
+type sessionSandboxPolicyProvider interface {
+	SandboxPolicyID() string
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -52,6 +65,7 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
+	esmControlTunnel       ESMControlTunnel
 }
 
 // NewSessionController creates a new SessionController instance
@@ -95,6 +109,10 @@ func WithSessionProfileRepository(repo repositories.SessionProfileRepository) Se
 	}
 }
 
+func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
+	return func(c *SessionController) { c.esmControlTunnel = tunnel }
+}
+
 // getSessionManager returns the current session manager
 func (c *SessionController) getSessionManager() repositories.SessionManager {
 	return c.sessionManagerProvider.GetSessionManager()
@@ -111,6 +129,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
+	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -165,6 +184,7 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		startReq.Scope = entities.ResourceScope(resolvedScope)
 		startReq.TeamID = resolvedTeamID
 	}
+	populateGitHubTokenFromAuthHeader(ctx, &startReq)
 
 	// Validate team scope authorization
 	if startReq.Scope == entities.ScopeTeam {
@@ -189,19 +209,20 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	if c.sessionProfileRepo != nil {
 		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
 		if profile != nil {
+			if startReq.Tags == nil {
+				startReq.Tags = make(map[string]string)
+			}
+			startReq.Tags["session_profile_id"] = profile.ID()
 			cfg := profile.Config()
 			startReq.ProfileMCPServers = cfg.MCPServers()
 
-			// Environment: profile is base, request keys override
+			// Keep profile environment separate so it can override team/user
+			// settings without overriding explicit request keys.
 			if len(cfg.Environment()) > 0 {
-				merged := make(map[string]string, len(cfg.Environment()))
+				startReq.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
 				for k, v := range cfg.Environment() {
-					merged[k] = v
+					startReq.ProfileEnvironment[k] = v
 				}
-				for k, v := range startReq.Environment {
-					merged[k] = v
-				}
-				startReq.Environment = merged
 			}
 
 			// Tags: profile is base, request keys override
@@ -282,6 +303,21 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.StartRequest) {
+	if startReq.Scope == entities.ScopeTeam {
+		return
+	}
+	if startReq.Params == nil {
+		startReq.Params = &entities.SessionParams{}
+	}
+	if startReq.Params.GithubToken != "" {
+		return
+	}
+	if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
+		startReq.Params.GithubToken = token
+	}
 }
 
 func containsAllocatorSelector(tags map[string]string) bool {
@@ -439,7 +475,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				"description": description,
 			},
 		}
-		if ks, ok := session.(*services.KubernetesSession); ok {
+		if provider, ok := session.(sessionSandboxPolicyProvider); ok {
+			if policyID := provider.SandboxPolicyID(); policyID != "" {
+				sessionData["sandbox_policy_id"] = policyID
+			}
+		} else if ks, ok := session.(*services.KubernetesSession); ok {
 			if req := ks.Request(); req != nil && req.Sandbox != nil {
 				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
 			}
@@ -613,6 +653,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	}
 
 	session := c.getSessionManager().GetSession(sessionID)
+	pendingAllocation := false
 	if session == nil {
 		// Check if it's a remote session
 		if c.sessionRouteRepo != nil {
@@ -620,16 +661,18 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			if err != nil {
 				log.Printf("Delete session: failed to look up route for %s: %v", sessionID, err)
 			} else if route != nil {
-				if route.ProxyURL == "" && route.RemoteSessionID != "" {
+				if route.ProxyURL == "" && route.ManagerID == "" && route.RemoteSessionID != "" {
 					return c.deleteLocalSessionAlias(ctx, route)
 				}
 				return c.deleteRemoteSession(ctx, route)
 			}
 		}
-		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
+		session = findPendingSessionAllocation(c.getSessionManager().ListSessions(entities.SessionFilter{}), sessionID)
 		if session == nil {
+			log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
 			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 		}
+		pendingAllocation = true
 	}
 
 	// Check authorization using pre-resolved authorization context (guaranteed to be non-nil by AuthMiddleware)
@@ -641,6 +684,29 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
 		sessionID, session.Status(), session.UserID(), clientIP)
+
+	if pendingAllocation {
+		deleter, ok := c.sessionCreator.(pendingSessionAllocationDeleter)
+		if !ok {
+			log.Printf("Failed to delete pending session allocation %s: deletion is unsupported", sessionID)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session allocation")
+		}
+		deleted, err := deleter.DeletePendingSessionAllocation(ctx.Request().Context(), sessionID)
+		if err != nil {
+			log.Printf("Failed to delete pending session allocation %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session allocation")
+		}
+		if !deleted {
+			log.Printf("Pending session allocation %s was claimed before deletion", sessionID)
+			return echo.NewHTTPError(http.StatusConflict, "Session allocation is no longer pending")
+		}
+		log.Printf("Pending session allocation %s deletion completed successfully", sessionID)
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Session allocation deleted successfully",
+			"session_id": sessionID,
+			"status":     "terminated",
+		})
+	}
 
 	if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
 		log.Printf("Failed to delete session %s: %v", sessionID, err)
@@ -656,6 +722,63 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	})
 }
 
+func findPendingSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {
+	for _, session := range sessions {
+		if session.ID() == sessionID && session.Status() == "pending" {
+			return session
+		}
+	}
+	return nil
+}
+
+// ResumeSession explicitly recreates a suspended session workload. Read-only
+// status, message, and SSE endpoints deliberately do not wake a session.
+func (c *SessionController) ResumeSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	workloadSessionID := sessionID
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil && c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to look up session route")
+		}
+		if route != nil {
+			if route.ProxyURL != "" || route.ManagerID != "" {
+				return c.resumeRemoteSession(ctx, route)
+			}
+			if route.RemoteSessionID != "" {
+				workloadSessionID = route.RemoteSessionID
+				session = c.getSessionManager().GetSession(workloadSessionID)
+			}
+		}
+	}
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session resume is not supported by this session manager")
+	}
+	ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), workloadSessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to restore session workload: %v", err))
+	}
+	status := "active"
+	code := http.StatusOK
+	if restoring {
+		status = "restoring"
+		code = http.StatusAccepted
+		ctx.Response().Header().Set("Retry-After", "2")
+	} else if ensured != nil {
+		status = ensured.Status()
+	}
+	return ctx.JSON(code, map[string]interface{}{"session_id": sessionID, "status": status})
+}
+
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
@@ -668,11 +791,9 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 			if err != nil {
 				log.Printf("[ROUTE] Failed to look up session route for %s: %v", sessionID, err)
 			} else if route != nil {
-				if route.ProxyURL == "" && route.RemoteSessionID != "" {
+				if route.ProxyURL == "" && route.ManagerID == "" && route.RemoteSessionID != "" {
 					session = c.getSessionManager().GetSession(route.RemoteSessionID)
-					if session != nil {
-						sessionID = route.SessionID
-					} else {
+					if session == nil {
 						return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 					}
 				} else {
@@ -831,7 +952,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 // It signs the request with HMAC-SHA256 before forwarding.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
-	if route.ProxyURL == "" || route.RemoteSessionID == "" {
+	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || (route.ProxyURL == "" && route.ManagerID == "")) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
 
@@ -841,9 +962,8 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		if authzCtx == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
-		// Basic auth check - we can't check session ownership without the actual session object,
-		// but we can verify the user is authenticated. Full ownership check would require
-		// fetching session info from B.
+		// The route lookup itself is authoritative for legacy entries that may not
+		// yet contain ownership metadata. New routes persist the owner fields.
 	}
 
 	// Build target URL: replace A's session ID with B's remote session ID in the path
@@ -858,6 +978,56 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		return echo.NewHTTPError(http.StatusBadRequest, "Failed to read request body")
 	}
 	ctx.Request().Body = io.NopCloser(bytes.NewReader(body))
+
+	if route.Transport == repositories.SessionRouteTransportDirectRuntime {
+		if c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.SessionID) {
+			ctx.Response().Header().Set("Retry-After", "2")
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Session runtime connection is unavailable")
+		}
+		suffix := strings.TrimPrefix(originalPath, "/"+sessionID)
+		if suffix == "" {
+			suffix = "/"
+		}
+		requestURL := &url.URL{Scheme: "http", Host: "session.local", Path: suffix, RawQuery: ctx.Request().URL.RawQuery}
+		req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, requestURL.String(), bytes.NewReader(body))
+		if reqErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build direct runtime request")
+		}
+		req.Header = ctx.Request().Header.Clone()
+		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
+		if tunnelErr != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
+		}
+		defer func() { _ = resp.Body.Close() }()
+		copyResponseHeaders(ctx.Response().Header(), resp.Header)
+		return streamTunnelResponse(ctx, resp)
+	}
+
+	if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
+		requestURL := &url.URL{Scheme: "http", Host: "esm.local", Path: targetPath, RawQuery: ctx.Request().URL.RawQuery}
+		req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, requestURL.String(), bytes.NewReader(body))
+		if reqErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build outbound ESM request")
+		}
+		req.Header = ctx.Request().Header.Clone()
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+			req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+		}
+		if route.TeamID != "" {
+			req.Header.Set("X-Forwarded-Team", route.TeamID)
+		}
+		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+		if tunnelErr != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
+		}
+		defer func() { _ = resp.Body.Close() }()
+		copyResponseHeaders(ctx.Response().Header(), resp.Header)
+		return streamTunnelResponse(ctx, resp)
+	}
+	if route.ProxyURL == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
 
 	target, err := url.Parse(route.ProxyURL)
 	if err != nil {
@@ -907,10 +1077,57 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	return nil
 }
 
+func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	if route.RemoteSessionID == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
+	}
+	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/sessions/" + route.RemoteSessionID + "/resume"
+	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
+	if useTunnel {
+		targetURL = "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"
+	} else if route.ProxyURL == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+	}
+	ts := hmacutil.NowTimestamp()
+	parsedTarget, err := url.Parse(targetURL)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
+	}
+	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, nil)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+		req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+	}
+	if route.TeamID != "" {
+		req.Header.Set("X-Forwarded-Team", route.TeamID)
+	}
+	var resp *http.Response
+	if useTunnel {
+		resp, err = c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	} else {
+		resp, err = http.DefaultClient.Do(req)
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			ctx.Response().Header().Add(key, value)
+		}
+	}
+	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+}
+
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
-	if route.ProxyURL == "" || route.RemoteSessionID == "" {
+	if (route.ProxyURL == "" && route.ManagerID == "") || route.RemoteSessionID == "" {
 		if c.sessionRouteRepo != nil {
 			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 				log.Printf("[REMOTE_DELETE] Warning: failed to delete pending route entry for session %s: %v", sessionID, err)
@@ -925,6 +1142,12 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	}
 
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/api/v1/sessions/" + route.RemoteSessionID
+	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
+	if useTunnel {
+		targetURL = "http://esm.local/api/v1/sessions/" + route.RemoteSessionID
+	} else if route.ProxyURL == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
 
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodDelete, targetURL, nil)
 	if err != nil {
@@ -938,9 +1161,20 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	sig := hmacutil.Sign([]byte(route.HMACSecret), msg)
 	req.Header.Set("X-Hub-Signature-256", sig)
 	req.Header.Set(hmacutil.TimestampHeader, ts)
+	if route.UserID != "" {
+		req.Header.Set("X-Forwarded-User", route.UserID)
+	}
+	if route.TeamID != "" {
+		req.Header.Set("X-Forwarded-Team", route.TeamID)
+	}
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
+	var resp *http.Response
+	if useTunnel {
+		resp, err = c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	} else {
+		resp, err = httpClient.Do(req)
+	}
 	if err != nil {
 		log.Printf("[REMOTE_DELETE] Failed to delete remote session %s on %s: %v", route.RemoteSessionID, route.ProxyURL, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
@@ -974,6 +1208,34 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+func copyResponseHeaders(target, source http.Header) {
+	for key, values := range source {
+		for _, value := range values {
+			target.Add(key, value)
+		}
+	}
+}
+
+func streamTunnelResponse(ctx echo.Context, resp *http.Response) error {
+	ctx.Response().WriteHeader(resp.StatusCode)
+	buffer := make([]byte, 64*1024)
+	for {
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := ctx.Response().Write(buffer[:n]); writeErr != nil {
+				return writeErr
+			}
+			ctx.Response().Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 func (c *SessionController) cleanupRemoteProvisionRequest(ctx context.Context, sessionID string) {
@@ -1014,29 +1276,18 @@ func (c *SessionController) captureFirstMessage(ctx echo.Context, session entiti
 // updateSessionTimestamp updates the session's updated_at and last_message_at timestamps.
 // Called on every POST /message request routed through the proxy.
 func (c *SessionController) updateSessionTimestamp(ctx echo.Context, session entities.Session) {
-	// Update in-memory timestamps
-	if ks, ok := session.(*services.KubernetesSession); ok {
-		now := time.Now()
-		ks.TouchUpdatedAt()
-		ks.SetLastMessageAt(now)
-
-		// Update Service annotations asynchronously to avoid blocking the request
-		go func() {
-			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
-				updatedAt := ks.UpdatedAt().Format(time.RFC3339)
-				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/updated-at", updatedAt); err != nil {
-					log.Printf("[SESSION] Failed to update updated-at annotation for session %s: %v", session.ID(), err)
-				}
-				lastMessageAt := now.UTC().Format(time.RFC3339)
-				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/last-message-at", lastMessageAt); err != nil {
-					log.Printf("[SESSION] Failed to update last-message-at annotation for session %s: %v", session.ID(), err)
-				}
-			}
-		}()
+	toucher, ok := c.getSessionManager().(repositories.SessionToucher)
+	if !ok {
+		return
 	}
+	now := time.Now()
+	go func() {
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := toucher.TouchSession(updateCtx, session.ID(), now); err != nil {
+			log.Printf("[SESSION] Failed to update activity timestamp for session %s: %v", session.ID(), err)
+		}
+	}()
 }
 
 // filterHiddenSessions removes sessions tagged with hidden=true from the list.
@@ -1158,36 +1409,16 @@ func (c *SessionController) GetSessionSandboxDomains(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
 	}
 
-	ks, ok := session.(*services.KubernetesSession)
+	reader, ok := c.getSessionManager().(repositories.SessionSandboxDomainReader)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotImplemented, "Sandbox domains not available for this session type")
 	}
-
-	provisionerURL := fmt.Sprintf("http://%s:%d/sandbox-domains", ks.ServiceDNS(), services.ProvisionerPort)
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(provisionerURL)
+	domains, err := reader.GetSessionSandboxDomains(ctx.Request().Context(), sessionID)
 	if err != nil {
 		log.Printf("[SESSION] Failed to fetch sandbox domains for %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Network filter not available")
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "Network filter not available for this session")
-	}
-
-	var domainsResp SandboxDomainsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&domainsResp); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to parse domain response")
-	}
-	if domainsResp.Allowed == nil {
-		domainsResp.Allowed = []string{}
-	}
-	if domainsResp.Denied == nil {
-		domainsResp.Denied = []string{}
-	}
-
-	return ctx.JSON(http.StatusOK, domainsResp)
+	return ctx.JSON(http.StatusOK, domains)
 }
 
 // resolveSessionProfile returns the session profile to apply for a session creation request.

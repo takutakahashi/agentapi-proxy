@@ -14,6 +14,25 @@ type Message struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+type SessionStatusEvent struct {
+	SessionID string    `json:"session_id"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type SessionMessageEvent struct {
+	SessionID string    `json:"session_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type SessionStatusWatcher interface {
+	SubscribeStatusEvents() (<-chan SessionStatusEvent, func())
+}
+
+type SessionMessageWatcher interface {
+	SubscribeMessageEvents(sessionID string) (<-chan SessionMessageEvent, func())
+}
+
 // SessionManager manages the lifecycle of sessions
 type SessionManager interface {
 	// CreateSession creates a new session and starts it
@@ -39,4 +58,30 @@ type SessionManager interface {
 
 	// Shutdown gracefully stops all sessions
 	Shutdown(timeout time.Duration) error
+}
+
+// SessionWorkloadEnsurer is implemented by managers that can lazily recreate
+// a missing runtime while retaining the same logical session ID.
+type SessionWorkloadEnsurer interface {
+	// EnsureSessionWorkload returns restoring=true while the workload is being
+	// created or is not ready yet. A missing canonical session is an error.
+	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
+}
+
+// SandboxDomains is execution-plane network-filter state for a session.
+type SandboxDomains struct {
+	Allowed []string `json:"allowed"`
+	Denied  []string `json:"denied"`
+}
+
+// SessionSandboxDomainReader is implemented by session managers that can
+// query their runtime's network filter.
+type SessionSandboxDomainReader interface {
+	GetSessionSandboxDomains(ctx context.Context, id string) (*SandboxDomains, error)
+}
+
+// SessionToucher updates execution-plane activity timestamps after a proxied
+// message. The API calls this capability instead of mutating Kubernetes state.
+type SessionToucher interface {
+	TouchSession(ctx context.Context, id string, at time.Time) error
 }

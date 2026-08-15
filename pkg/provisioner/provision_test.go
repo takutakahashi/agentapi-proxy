@@ -44,12 +44,42 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 		Session: sessionsettings.SessionMeta{AgentType: "cursor"},
 	}, nil)
 
-	if cmd != "agentapi-proxy" {
-		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
 	}
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestInjectSessionPersistenceHookBacksUpThenSchedulesSuspend(t *testing.T) {
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		AgentType: "codex-acp", PersistenceEnabled: true,
+	}}
+	injectSessionPersistenceHook(settings)
+	encoded, err := json.Marshal(settings.Codex.HooksJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(encoded)
+	backup := strings.Index(command, "backup-session-state")
+	suspend := strings.Index(command, "schedule-session-suspend")
+	if backup < 0 || suspend < 0 || backup >= suspend {
+		t.Fatalf("persistence hook must checkpoint before scheduling suspend: %s", command)
+	}
+}
+
+func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+	env := map[string]string{"CCPLANT_BINARY_PATH": "/Applications/agentapi-proxy.app/Contents/MacOS/agentapi-proxy"}
+
+	cmd, _ := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "codex-acp"},
+	}, env)
+
+	if cmd != env["CCPLANT_BINARY_PATH"] {
+		t.Fatalf("command = %q, want bundled binary %q", cmd, env["CCPLANT_BINARY_PATH"])
 	}
 }
 
@@ -64,8 +94,8 @@ func TestBuildAgentCommandPiOllama(t *testing.T) {
 		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
 	}, env)
 
-	if cmd != "agentapi-proxy" {
-		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
 	}
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "npx", "-y", "pi-acp"}
 	if !reflect.DeepEqual(args, want) {
@@ -485,7 +515,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client send-notification",
+							"command": "ccplant client send-notification",
 						},
 					},
 				},

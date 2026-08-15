@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -217,13 +218,15 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Fatal("Expected session to be created")
 	}
 
-	// Note: the settings Secret is NOT created immediately in CreateSession().
-	// It is created asynchronously in watchSession() after successful provisioning.
-	// Verify the settings Secret does NOT exist at this point (before provisioning).
+	// The settings Secret must exist before provisioning so a Pod replacement can
+	// auto-provision even if the original Pod disappears during startup.
 	settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
-	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
-	if err == nil {
-		t.Error("Settings secret should NOT exist before provisioning completes")
+	settingsSecret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Settings secret should exist before provisioning completes: %v", err)
+	}
+	if len(settingsSecret.Data["settings.yaml"]) == 0 {
+		t.Error("Expected settings.yaml in restart settings secret")
 	}
 
 	// Verify that the session stores the provision settings for later use.
@@ -251,11 +254,11 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 
 	// Verify the main container uses agent-provisioner command.
 	mainContainer := podSpec.Containers[0]
-	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "agentapi-proxy" {
-		t.Errorf("Expected main container command [agentapi-proxy], got %v", mainContainer.Command)
+	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "/bin/sh" {
+		t.Errorf("Expected main container command [/bin/sh -c], got %v", mainContainer.Command)
 	}
-	if len(mainContainer.Args) == 0 || mainContainer.Args[0] != "agent-provisioner" {
-		t.Errorf("Expected main container args [agent-provisioner], got %v", mainContainer.Args)
+	if len(mainContainer.Args) == 0 || !strings.Contains(mainContainer.Args[0], "agent-provisioner") {
+		t.Errorf("Expected main container args to run agent-provisioner, got %v", mainContainer.Args)
 	}
 
 	// Verify provisioner port (9001) is exposed.

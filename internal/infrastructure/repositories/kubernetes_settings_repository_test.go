@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -10,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 )
 
 func TestKubernetesSettingsRepository_Save(t *testing.T) {
@@ -167,6 +169,37 @@ func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 	}
 }
 
+func TestKubernetesSettingsRepository_SaveUpdateWithLibSQL(t *testing.T) {
+	ctx := context.Background()
+	store, err := kvstore.NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "settings.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	client := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
+	repo := NewKubernetesSettingsRepository(client, "default")
+	settings := entities.NewSettings("libsql-user")
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("model-v1")
+	settings.SetBedrock(bedrock)
+	if err := repo.Save(ctx, settings); err != nil {
+		t.Fatalf("save initial settings: %v", err)
+	}
+
+	bedrock.SetModel("model-v2")
+	if err := repo.Save(ctx, settings); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+	loaded, err := repo.FindByName(ctx, "libsql-user")
+	if err != nil {
+		t.Fatalf("load updated settings: %v", err)
+	}
+	if got := loaded.Bedrock().Model(); got != "model-v2" {
+		t.Fatalf("model = %q, want model-v2", got)
+	}
+}
+
 func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	repo := NewKubernetesSettingsRepository(client, "default")
@@ -204,6 +237,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	updatedBedrock.SetRoleARN("arn:aws:iam::222222222222:role/UpdatedRole")
 	updatedBedrock.SetProfile("updated-profile")
 	settings.SetBedrock(updatedBedrock)
+	settings.SetGitHubAppInstallationID("4242")
 
 	err = repo.Save(ctx, settings)
 	if err != nil {
@@ -249,6 +283,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	if bedrockData["profile"] != "updated-profile" {
 		t.Errorf("Expected updated profile 'updated-profile', got '%v'", bedrockData["profile"])
 	}
+	if parsed["github_app_installation_id"] != "4242" {
+		t.Errorf("Expected github_app_installation_id='4242', got '%v'", parsed["github_app_installation_id"])
+	}
 
 	// Verify through FindByName as well
 	loaded, err := repo.FindByName(ctx, "update-all-fields")
@@ -270,6 +307,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	}
 	if loaded.Bedrock().Profile() != "updated-profile" {
 		t.Errorf("FindByName: Expected profile 'updated-profile', got '%s'", loaded.Bedrock().Profile())
+	}
+	if loaded.GitHubAppInstallationID() != "4242" {
+		t.Errorf("FindByName: Expected github_app_installation_id '4242', got '%s'", loaded.GitHubAppInstallationID())
 	}
 }
 

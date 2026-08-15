@@ -14,6 +14,7 @@
         "token_url": "https://github.com/login/oauth/access_token"
       },
       "user_mapping": {
+        "allow_users_without_team": false,
         "default_role": "user",
         "default_permissions": ["read", "session:create", "session:list"],
         "team_role_mapping": {

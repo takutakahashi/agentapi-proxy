@@ -2,6 +2,90 @@
 
 A Helm chart for deploying AgentAPI Proxy - a reverse proxy and process manager for agentapi server instances on Kubernetes.
 
+## Process separation
+
+The chart keeps three independent workloads in one chart: `ccplant server` for
+the API proxy, `ccplant worker` for background controllers, and `ccplant
+session-manager` for allocation and Kubernetes session lifecycle. Each role has
+its own image, ServiceAccount, credentials, persistence and Redis client values.
+With libSQL persistence, API and worker do not mount Kubernetes credentials.
+With Kubernetes KV persistence they receive a Secret/ConfigMap-only Role;
+session workload RBAC remains exclusive to the session-manager.
+
+The chart remains a single chart. Configure the independent workloads under
+`api`, `worker` and `sessionManager`. Deprecated root proxy values are retained
+only for upgrade compatibility.
+Workers persist application records through the configured `kvStore` backend
+and use Redis leases for leader election; they never create Kubernetes Lease
+objects. Session creation, listing, messaging, deletion, and stock operations
+are delegated to the backend control API. Enabling `worker` requires either
+libSQL or Kubernetes KV persistence, bundled or external Redis, and a
+worker-control Secret shared only with the API.
+
+```yaml
+worker:
+  enabled: true
+  controlApi:
+    tokenSecretRef:
+      name: worker-control
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: worker-libsql
+  redis:
+    addr: redis.example:6379
+  schedule:
+    enabled: true
+  stockInventory:
+    enabled: true
+
+api:
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: api-libsql
+  redis:
+    addr: redis.example:6379
+  encryption:
+    keySecretRef:
+      name: application-encryption
+  workerControl:
+    tokenSecretRef:
+      name: worker-control
+  sessionManager:
+    url: http://agentapi-proxy-session-manager:8080
+    tokenSecretRef:
+      name: manager-internal
+
+sessionManager:
+  enabled: true
+  internalApi:
+    tokenSecretRef:
+      name: manager-internal
+  encryption:
+    keySecretRef:
+      name: application-encryption
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: manager-libsql
+  redis:
+    addr: redis.example:6379
+  kubernetesSession:
+    provisioner:
+      tokenSecretRef:
+        name: agentapi-provisioner-token
+
+  # Optional: register this manager with an external parent.
+  externalRegistration:
+    enabled: true
+    upstreamUrl: https://control.example.com
+    connectionTokenSecretRef:
+      name: session-manager-credentials
+    hmacSecretRef:
+      name: session-manager-credentials
+```
+
 ## Prerequisites
 
 - Kubernetes 1.21+
@@ -16,6 +100,46 @@ To install the chart with the release name `my-agentapi-proxy`:
 ```bash
 helm install my-agentapi-proxy ./helm/agentapi-proxy
 ```
+
+The default `values.yaml` is a minimal single-replica API-only installation.
+Session allocation, SCIA, asset serving, persistent session workspaces,
+background workers, OpenTelemetry collection, and Redis are opt-in. More than
+one API replica requires the bundled Redis or `api.redis.addr`.
+
+### Migrating legacy values
+
+Charts that ran the API, workers, and Kubernetes session lifecycle in one
+process used root-level values. Convert those values before enabling the
+separated workloads:
+
+```bash
+helm get values agentapi-proxy -n agentapi -o yaml > legacy-values.yaml
+
+ccplant helm migrate-values \
+  --input legacy-values.yaml \
+  --output separated-values.yaml \
+  --namespace agentapi \
+  --release agentapi-proxy \
+  --worker-control-secret agentapi-worker-control \
+  --manager-internal-secret agentapi-session-manager-internal \
+  --encryption-secret agentapi-application-encryption \
+  --provisioner-secret agentapi-provisioner-token
+
+helm upgrade agentapi-proxy oci://ghcr.io/ccplant/charts/agentapi-proxy \
+  -n agentapi -f separated-values.yaml
+```
+
+The converter preserves all legacy keys and adds the independent `api`,
+`worker`, and `sessionManager` sections. It does not create or copy Secrets;
+the four referenced Secrets must exist before the upgrade. Existing separated
+role sections are rejected unless `--force` is explicitly supplied. Verify
+that the migrated root image contains the `worker` and `session-manager`
+subcommands; older monolithic images cannot run the separated Deployments.
+Legacy `env` and `envFrom` entries are copied to every role for compatibility;
+remove API-only or worker-only entries after confirming the migration.
+For legacy libSQL configurations without an explicit KV namespace, the
+converter preserves `kubernetesSession.namespace` as the logical namespace so
+existing schedules, profiles, memories, and other resources remain visible.
 
 ### From OCI Registry (Recommended)
 
@@ -52,10 +176,48 @@ The command removes all the Kubernetes components associated with the chart and 
 
 | Name                | Description                       | Value                                      |
 | ------------------- | --------------------------------- | ------------------------------------------ |
-| `image.repository`  | AgentAPI Proxy image repository   | `ghcr.io/takutakahashi/agentapi-proxy`     |
-| `image.pullPolicy`  | AgentAPI Proxy image pull policy  | `IfNotPresent`                             |
+| `api.image.repository` | API image repository | `ghcr.io/ccplant/ccplant-api` |
+| `worker.image.repository` | Worker image repository | `ghcr.io/ccplant/ccplant-api` |
+| `sessionManager.image.repository` | Session-manager image repository | `ghcr.io/ccplant/ccplant-backend` |
+| `kubernetesSession.image` | Legacy in-process session Pod image; empty uses the full root image | `""` |
+| `sessionManager.kubernetesSession.image` | Dedicated manager session Pod image; empty uses the full session-manager image | `""` |
 
-**Note:** The image tag is not configurable and always uses the Chart's `appVersion`.
+An empty role image tag uses the chart's `appVersion`.
+
+The default uses the lightweight image for the API and background worker while
+keeping the compatibility-sensitive session-manager and session runtime on the
+full image:
+
+```yaml
+api:
+  image:
+    repository: ghcr.io/ccplant/ccplant-api
+
+worker:
+  image:
+    repository: ghcr.io/ccplant/ccplant-api
+sessionManager:
+  image:
+    repository: ghcr.io/ccplant/ccplant-backend
+```
+
+The API-only image does not contain agent CLIs, Docker/GitHub tooling, or the
+session runtime. It supports the API and worker commands, but must not be used
+for session-manager, provisioner, or direct/local session execution roles.
+
+Override these independently from CI/CD environment variables by passing them
+to Helm, for example:
+
+```bash
+helm upgrade --install backend ./backend/helm/agentapi-proxy \
+  --set-string api.image.repository="${BACKEND_API_IMAGE_REPOSITORY}" \
+  --set-string kubernetesSession.image="${SESSION_IMAGE}"
+```
+
+When running `ccplant` without Helm, `AGENTAPI_K8S_SESSION_IMAGE` selects the
+session Pod image directly. A container cannot change its own Kubernetes image
+from an environment variable; use `api.image.repository`/`api.image.tag` to
+select the backend API Deployment image.
 
 ### Deployment parameters
 
@@ -73,7 +235,6 @@ The command removes all the Kubernetes components associated with the chart and 
 | --------------------- | ----------------------------------------- | ----------- |
 | `service.type`        | AgentAPI Proxy service type              | `ClusterIP` |
 | `service.port`        | AgentAPI Proxy service HTTP port         | `8080`      |
-| `service.agentapiPort`| AgentAPI instances starting port         | `9000`      |
 
 ### Ingress parameters
 
@@ -89,7 +250,7 @@ The command removes all the Kubernetes components associated with the chart and 
 
 | Name                                               | Description                                      | Value |
 | -------------------------------------------------- | ------------------------------------------------ | ----- |
-| `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `true` |
+| `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `false` |
 | `scia.publicBaseUrl`                               | Browser-facing scia base URL                    | `""` |
 | `scia.credential`                                  | Google credential ID injected into sessions; empty disables Google OAuth config | `""` |
 | `scia.todoistCredential`                           | Todoist credential ID injected into sessions    | `default.todoist` |
@@ -390,7 +551,8 @@ kubectl create secret generic agentapi-s3-credentials \
 
 ## Health Checks
 
-The chart includes liveness and readiness probes that check the `/health` endpoint. These can be customized in values.yaml:
+The API probes default to `/health`; session-manager probes use `/livez` and
+`/readyz`. They can be customized in values.yaml.
 
 ```yaml
 livenessProbe:
@@ -410,22 +572,48 @@ readinessProbe:
 
 ## Scaling
 
-The chart uses StatefulSet for better management:
+The chart uses a Deployment. Single-replica operation does not require Redis.
+For multiple API replicas, enable the bundled Redis or configure
+`api.redis.addr`:
 
 ```bash
 # Scale to 3 replicas (local chart)
-helm upgrade agentapi-proxy ./helm/agentapi-proxy --set replicaCount=3
+helm upgrade agentapi-proxy ./helm/agentapi-proxy \
+  --set api.replicaCount=3 \
+  --set redis.enabled=true
 
 # Scale to 3 replicas (OCI registry)
-helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0 --set replicaCount=3
+helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
+  --version 0.1.0 \
+  --set api.replicaCount=3 \
+  --set redis.enabled=true
 ```
+
+To route runtime prompts, cancellation, and session events through outbound-only
+session HTTPS long polling, enable session control together with Redis:
+
+```bash
+helm upgrade agentapi-proxy ./helm/agentapi-proxy \
+  --set redis.enabled=true \
+  --set sessionManager.sessionControl.enabled=true
+```
+
+Only backend pods connect to Redis. Session pods receive the backend control-plane
+URL and provisioner token, but no Redis address or credentials. See
+[`docs/session-control-long-poll.md`](../../docs/session-control-long-poll.md) for
+the transport and retention model.
+
+For ESM sessions, enable the direct Session Pod-to-parent runtime transport with
+`--set sessionManager.sessionControl.directRuntimeEnabled=true`. This requires
+`sessionManager.sessionControl.enabled=true` and Redis. See
+[`docs/direct-session-runtime.md`](../../docs/direct-session-runtime.md).
 
 ## Troubleshooting
 
-### Check StatefulSet status
+### Check Deployment status
 ```bash
-kubectl get statefulset
-kubectl describe statefulset agentapi-proxy
+kubectl get deployment
+kubectl describe deployment agentapi-proxy
 ```
 
 ### Check pod logs
@@ -463,6 +651,32 @@ helm upgrade agentapi-proxy ./helm/agentapi-proxy
 # Upgrade from OCI registry
 helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 ```
+
+## Stable control-plane Service
+
+The chart creates `control` as a release-independent endpoint for session
+provisioners. It selects the API only in deprecated direct-session mode and
+selects the dedicated session-manager whenever that role is enabled. The
+Service is retained when its creating release is
+uninstalled, allowing a blue/green deployment to move its selector to the new
+proxy without recreating existing session workloads.
+
+Install the shadow release without trying to create the shared Service or
+fixed-name session RBAC:
+
+```yaml
+controlPlaneService:
+  create: false
+
+kubernetesSession:
+  serviceAccountName: agentapi-proxy-session
+  rbac:
+    create: false
+```
+
+An explicit `kubernetesSession.provisioner.proxyUrl` takes precedence over the
+stable Service. Set `controlPlaneService.enabled=false` to retain the previous
+release-local Service behavior for new sessions.
 
 ## Values File Example
 

@@ -38,11 +38,11 @@ agentapi-proxy helpers setup-gh
 
 **作業完了後は必ずユーザーに通知を送信してください。**
 
-作業の終了を通知するために `agentapi-proxy client send-notification` コマンドが使用できます。
+作業の終了を通知するために `ccplant client send-notification` コマンドが使用できます。
 以下は実行例です。
 
 ```bash
-agentapi-proxy client send-notification \
+ccplant client send-notification \
   --title "作業が完了しました" \
   --body "作業内容を確認してください" \
   --notify-session-id "$AGENTAPI_SESSION_ID" \

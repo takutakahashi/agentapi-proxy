@@ -16,16 +16,20 @@ import (
 // trigger source (schedule, webhook, slackbot, etc.).
 // Callers should use ResolveTeams() to populate the Teams field correctly.
 type LaunchRequest struct {
+	ResumeFrom string
 	// Identity
 	UserID string
-	Scope  entities.ResourceScope
-	TeamID string
+	// TriggeredUserID is the external event actor (for example a GitHub login).
+	TriggeredUserID string
+	Scope           entities.ResourceScope
+	TeamID          string
 	// Teams is the list of GitHub team slugs for settings injection.
 	// MUST be populated via ResolveTeams() — never leave empty for team-scoped sessions.
 	Teams []string
 
 	// Session configuration
 	Environment              map[string]string
+	ProfileEnvironment       map[string]string
 	Tags                     map[string]string
 	InitialMessage           string
 	GithubToken              string
@@ -144,6 +148,10 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		profile := uc.resolveSessionProfile(ctx, req)
 		if profile != nil {
 			applyProfileToLaunchRequest(profile.Config(), &req)
+			if req.Tags == nil {
+				req.Tags = make(map[string]string)
+			}
+			req.Tags["session_profile_id"] = profile.ID()
 		}
 	}
 
@@ -189,8 +197,11 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 	// 3. Build RunServerRequest and create the session.
 	// Teams is provided by the caller via ResolveTeams() so it is always set correctly.
 	runReq := &entities.RunServerRequest{
+		ResumeFrom:               req.ResumeFrom,
 		UserID:                   req.UserID,
+		TriggeredUserID:          req.TriggeredUserID,
 		Environment:              req.Environment,
+		ProfileEnvironment:       req.ProfileEnvironment,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,
 		TeamID:                   req.TeamID,
@@ -342,16 +353,13 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	if cfg.MCPServers() != nil {
 		req.ProfileMCPServers = cfg.MCPServers()
 	}
-	// Environment: profile is base, request overrides key-by-key
+	// Keep profile environment separate so settings resolution can apply it above
+	// team/user settings while still allowing explicit request values to win.
 	if len(cfg.Environment()) > 0 {
-		merged := make(map[string]string, len(cfg.Environment()))
+		req.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
 		for k, v := range cfg.Environment() {
-			merged[k] = v
+			req.ProfileEnvironment[k] = v
 		}
-		for k, v := range req.Environment {
-			merged[k] = v
-		}
-		req.Environment = merged
 	}
 	// Tags: profile is base, request overrides key-by-key
 	if len(cfg.Tags()) > 0 {

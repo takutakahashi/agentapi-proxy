@@ -182,10 +182,12 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		"CFFIXED_USER_HOME="+home,
 		"AGENTAPI_NATIVE_SESSION_ROOT="+root,
 		"AGENTAPI_BUILD_DIR="+buildDir,
+		"CCPLANT_BINARY_PATH="+m.binaryPath,
 		"AGENTAPI_SESSION_ID="+id,
 		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
 		"PROVISIONER_PROXY_URL="+m.proxyURL,
 		"PROVISIONER_TOKEN="+m.provisionerToken,
+		"SESSION_CONTROL_TOKEN="+deriveSessionControlToken(m.provisionerToken, id),
 		"PROVISIONER_UPSTREAM_AUTH_TOKEN="+m.upstreamAuthToken,
 		"POD_NAME=native-"+id,
 		"POD_NAMESPACE=native",
@@ -234,7 +236,9 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 func nativeProvisionerEnvironment(base []string, values ...string) []string {
 	env := make([]string, 0, len(base)+len(values))
 	for _, value := range base {
-		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
+		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") ||
+			strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") ||
+			strings.HasPrefix(value, "CCPLANT_BINARY_PATH=") {
 			continue
 		}
 		env = append(env, value)
@@ -253,6 +257,10 @@ func reserveTCPPort() (int, error) {
 
 func (m *NativeSessionManager) ValidateProvisionerToken(token string) bool {
 	return token != "" && token == m.provisionerToken
+}
+
+func (m *NativeSessionManager) ValidateSessionControlToken(sessionID, token string) bool {
+	return validateSessionControlToken(m.provisionerToken, sessionID, token)
 }
 
 func (m *NativeSessionManager) UsesRemoteProvisioner() bool { return true }
@@ -316,7 +324,11 @@ func (m *NativeSessionManager) UpdateProvisionRequestStatus(_ context.Context, s
 func (m *NativeSessionManager) GetSession(id string) entities.Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.sessions[id]
+	session, ok := m.sessions[id]
+	if !ok || session == nil {
+		return nil
+	}
+	return session
 }
 
 func (m *NativeSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {

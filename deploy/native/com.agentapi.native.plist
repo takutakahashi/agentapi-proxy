@@ -6,14 +6,15 @@
   <string>com.agentapi.native</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/agentapi-proxy</string>
-    <string>native-session-manager</string>
-    <string>--listen</string><string>:8080</string>
-    <string>--upstream-url</string><string>REPLACE_UPSTREAM_URL</string>
-    <string>--connection-token</string><string>REPLACE_CONNECTION_TOKEN</string>
-    <string>--public-url</string><string>REPLACE_PUBLIC_URL</string>
-    <string>--state-dir</string><string>REPLACE_STATE_DIR</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>exec "$CCPLANT_BINARY_PATH" native-session-manager --listen :8080 --upstream-url REPLACE_UPSTREAM_URL --connection-token REPLACE_CONNECTION_TOKEN --state-dir REPLACE_STATE_DIR</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CCPLANT_BINARY_PATH</key>
+    <string>/usr/local/bin/ccplant</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>

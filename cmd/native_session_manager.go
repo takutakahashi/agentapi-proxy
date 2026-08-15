@@ -33,8 +33,9 @@ var NativeSessionManagerCmd = &cobra.Command{
 }
 
 var nativeSessionManagerOptions struct {
-	listen, upstreamURL, connectionToken, upstreamAuthToken, publicURL, stateDir, binaryPath, managerID, configPath string
-	filesystemSandbox                                                                                               bool
+	listen, upstreamURL, connectionToken, upstreamAuthToken, stateDir, binaryPath, managerID, configPath string
+	filesystemSandbox                                                                                    bool
+	inheritRuntimeProfile                                                                                bool
 }
 
 type nativeFilesystemSandboxConfig struct {
@@ -42,22 +43,22 @@ type nativeFilesystemSandboxConfig struct {
 }
 
 type nativeDaemonConfig struct {
-	Listen             string                        `json:"listen"`
-	UpstreamURL        string                        `json:"upstream_url"`
-	ConnectionToken    string                        `json:"connection_token"`
-	CredentialsPath    string                        `json:"credentials_path,omitempty"`
-	UpstreamAuthToken  string                        `json:"upstream_auth_token,omitempty"`
-	PublicURL          string                        `json:"public_url"`
-	StateDir           string                        `json:"state_dir"`
-	BinaryPath         string                        `json:"binary_path,omitempty"`
-	ManagerID          string                        `json:"manager_id,omitempty"`
-	InstanceID         string                        `json:"instance_id,omitempty"`
-	Scope              string                        `json:"scope,omitempty"`
-	TeamID             string                        `json:"team_id,omitempty"`
-	Labels             map[string]string             `json:"labels,omitempty"`
-	ManagerEnvironment map[string]string             `json:"manager_environment,omitempty"`
-	Version            string                        `json:"version,omitempty"`
-	FilesystemSandbox  nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
+	Listen                string                        `json:"listen"`
+	UpstreamURL           string                        `json:"upstream_url"`
+	ConnectionToken       string                        `json:"connection_token"`
+	CredentialsPath       string                        `json:"credentials_path,omitempty"`
+	UpstreamAuthToken     string                        `json:"upstream_auth_token,omitempty"`
+	StateDir              string                        `json:"state_dir"`
+	BinaryPath            string                        `json:"binary_path,omitempty"`
+	ManagerID             string                        `json:"manager_id,omitempty"`
+	InstanceID            string                        `json:"instance_id,omitempty"`
+	Scope                 string                        `json:"scope,omitempty"`
+	TeamID                string                        `json:"team_id,omitempty"`
+	Labels                map[string]string             `json:"labels,omitempty"`
+	ManagerEnvironment    map[string]string             `json:"manager_environment,omitempty"`
+	Version               string                        `json:"version,omitempty"`
+	FilesystemSandbox     nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
+	InheritRuntimeProfile bool                          `json:"inherit_runtime_profile,omitempty"`
 }
 
 func init() {
@@ -66,12 +67,12 @@ func init() {
 	f.StringVar(&nativeSessionManagerOptions.upstreamURL, "upstream-url", "", "parent agentapi-proxy URL")
 	f.StringVar(&nativeSessionManagerOptions.connectionToken, "connection-token", "", "ESM connection/HMAC token")
 	f.StringVar(&nativeSessionManagerOptions.upstreamAuthToken, "upstream-auth-token", "", "optional parent proxy authentication token")
-	f.StringVar(&nativeSessionManagerOptions.publicURL, "public-url", "", "URL used by the parent proxy to route sessions")
 	f.StringVar(&nativeSessionManagerOptions.stateDir, "state-dir", "./native-sessions", "native session state directory")
 	f.StringVar(&nativeSessionManagerOptions.binaryPath, "binary", "", "agentapi-proxy binary used for provisioners")
 	f.StringVar(&nativeSessionManagerOptions.managerID, "manager-id", "", "registered external session manager ID")
 	f.StringVar(&nativeSessionManagerOptions.configPath, "config", "", "JSON daemon configuration file")
 	f.BoolVar(&nativeSessionManagerOptions.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
+	f.BoolVar(&nativeSessionManagerOptions.inheritRuntimeProfile, "inherit-runtime-profile", false, "apply runtime profile received from the parent proxy")
 }
 
 func runNativeSessionManager(command *cobra.Command, _ []string) error {
@@ -93,9 +94,6 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		if !command.Flags().Changed("upstream-auth-token") {
 			o.upstreamAuthToken = cfg.UpstreamAuthToken
 		}
-		if !command.Flags().Changed("public-url") {
-			o.publicURL = cfg.PublicURL
-		}
 		if !command.Flags().Changed("state-dir") {
 			o.stateDir = cfg.StateDir
 		}
@@ -108,9 +106,12 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		if !command.Flags().Changed("filesystem-sandbox") {
 			o.filesystemSandbox = cfg.FilesystemSandbox.Enabled
 		}
+		if !command.Flags().Changed("inherit-runtime-profile") {
+			o.inheritRuntimeProfile = cfg.InheritRuntimeProfile
+		}
 	}
-	if o.upstreamURL == "" || o.connectionToken == "" || o.publicURL == "" {
-		return fmt.Errorf("--upstream-url, --connection-token and --public-url are required")
+	if o.upstreamURL == "" || o.connectionToken == "" {
+		return fmt.Errorf("--upstream-url and --connection-token are required")
 	}
 	manager, err := services.NewNativeSessionManager(o.stateDir, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.binaryPath, o.filesystemSandbox)
 	if err != nil {
@@ -133,10 +134,13 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuth(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.publicURL)
+	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuthAndRuntimeProfile(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, "", o.inheritRuntimeProfile)
 	go worker.Start(ctx)
+	localURL := "http://127.0.0.1" + o.listen
+	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
+	go controlWorker.Start(ctx)
 	if o.managerID != "" {
-		go runNativeHeartbeat(ctx, o.upstreamURL, o.managerID, o.connectionToken, o.publicURL, manager)
+		go runNativeHeartbeat(ctx, o.upstreamURL, o.managerID, o.connectionToken, manager)
 	}
 	go func() {
 		<-ctx.Done()
@@ -144,20 +148,19 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		defer shutdownCancel()
 		_ = e.Shutdown(shutdownCtx)
 	}()
-	log.Printf("[NATIVE_ESM] listening on %s, upstream=%s, public_url=%s", o.listen, o.upstreamURL, o.publicURL)
+	log.Printf("[NATIVE_ESM] listening on %s, upstream=%s, transport=outbound-control", o.listen, o.upstreamURL)
 	if err := e.Start(o.listen); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
 }
 
-func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token, publicURL string, manager *services.NativeSessionManager) {
+func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token string, manager *services.NativeSessionManager) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	send := func() {
 		body, _ := json.Marshal(map[string]interface{}{
-			"public_url": publicURL, "version": nativeBuildVersion(),
-			"active_sessions": len(manager.ListSessions(entities.SessionFilter{})),
+			"version": nativeBuildVersion(), "active_sessions": len(manager.ListSessions(entities.SessionFilter{})),
 		})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstreamURL, "/")+"/external-session-managers/"+url.PathEscape(managerID)+"/heartbeat", bytes.NewReader(body))
 		if err != nil {

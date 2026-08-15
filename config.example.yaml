@@ -1,6 +1,26 @@
 # Example configuration file for agentapi-proxy
+
+# Executable used by generated hooks and child processes.
+# May also be set with CCPLANT_BINARY_PATH.
+binary_path: ccplant
 # This file demonstrates all available configuration options
 # Values can be overridden by environment variables with AGENTAPI_ prefix
+
+# Persistence for application KV data represented as Secrets and ConfigMaps.
+# Inject auth_token with AGENTAPI_KV_STORE_AUTH_TOKEN in production.
+kv_store:
+  backend: kubernetes
+  database_url: ""
+  auth_token: ""
+  # To mirror application KV writes, replace the legacy fields above with:
+  # primary:
+  #   backend: kubernetes
+  # secondary:
+  #   backend: libsql
+  #   database_url: "libsql://example.turso.io"
+  #   auth_token: ""
+  # replication:
+  #   mode: rollback # rollback or best_effort
 
 # Authentication configuration
 auth:
@@ -31,3 +51,8 @@ auth:
       client_secret: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET}"
       scope: "read:user read:org project"
       base_url: ""  # Defaults to auth.github.base_url
+# Dedicated libSQL persistence for response-level token usage.
+usage:
+  enabled: false
+  database_url: ""
+  auth_token: ""

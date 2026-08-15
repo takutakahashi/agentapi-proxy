@@ -6,11 +6,11 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -26,18 +26,19 @@ const BaseSettingsName = "base"
 type SettingsController struct {
 	repo             repositories.SettingsRepository
 	notificationSvc  *notification.Service // Optional
-	gitSyncKMSKeyARN string                // optional; non-empty when GitHub sync encryption is configured
-	gitSyncAWSRegion string
 	esmMu            sync.Mutex
+	esmControlTunnel ESMControlTunnel
+}
+
+func (c *SettingsController) SetESMControlTunnel(tunnel ESMControlTunnel) {
+	c.esmControlTunnel = tunnel
 }
 
 // NewSettingsController creates new settings controller
-func NewSettingsController(repo repositories.SettingsRepository, notificationSvc *notification.Service, gitSyncKMSKeyARN, gitSyncAWSRegion string) *SettingsController {
+func NewSettingsController(repo repositories.SettingsRepository, notificationSvc *notification.Service) *SettingsController {
 	return &SettingsController{
-		repo:             repo,
-		notificationSvc:  notificationSvc,
-		gitSyncKMSKeyARN: gitSyncKMSKeyARN,
-		gitSyncAWSRegion: gitSyncAWSRegion,
+		repo:            repo,
+		notificationSvc: notificationSvc,
 	}
 }
 
@@ -71,33 +72,6 @@ type MarketplaceRequest struct {
 	URL string `json:"url"`
 }
 
-// GitSyncConfigRequest is the request body for GitHub sync configuration
-type GitSyncConfigRequest struct {
-	Enabled      bool   `json:"enabled"`
-	RepoFullName string `json:"repo_full_name"`
-	Branch       string `json:"branch,omitempty"`
-	RootPath     string `json:"root_path,omitempty"`
-	AutoPush     bool   `json:"auto_push"`
-	GitHubToken  string `json:"github_token,omitempty"`
-}
-
-// GitSyncEncryptionResponse is the public encryption info for GitHub sync (no secrets)
-type GitSyncEncryptionResponse struct {
-	DEKVersion int  `json:"dek_version,omitempty"`
-	DEKReady   bool `json:"dek_ready"`
-}
-
-// GitSyncConfigResponse is the response for GitHub sync configuration (token redacted)
-type GitSyncConfigResponse struct {
-	Enabled        bool                      `json:"enabled"`
-	RepoFullName   string                    `json:"repo_full_name,omitempty"`
-	Branch         string                    `json:"branch,omitempty"`
-	RootPath       string                    `json:"root_path,omitempty"`
-	AutoPush       bool                      `json:"auto_push"`
-	HasGitHubToken bool                      `json:"has_github_token"`
-	Encryption     GitSyncEncryptionResponse `json:"encryption"`
-}
-
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
 	Bedrock                 *BedrockSettingsRequest          `json:"bedrock"`
@@ -108,19 +82,19 @@ type UpdateSettingsRequest struct {
 	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
 	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                   // Custom environment variables
 	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`          // "org/team-slug" format; "" to clear
+	GitHubAppInstallationID *string                          `json:"github_app_installation_id,omitempty"` // Team GitHub App installation ID; "" to clear
 	SlackUserID             *string                          `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`      // Active notification channels (e.g. ["web", "slack"])
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
-	GitSync                 *GitSyncConfigRequest            `json:"git_sync,omitempty"`                   // GitHub sync configuration
 	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
+	DefaultAgentType        *string                          `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
 }
 
-// ExternalSessionManagerRequest represents a single external session manager registration
+// ExternalSessionManagerRequest represents updates to an already-enrolled manager.
 type ExternalSessionManagerRequest struct {
-	ID         string            `json:"id,omitempty"`          // Auto-generated if empty
+	ID         string            `json:"id"`                    // Required; registration uses the enrollment-token API
 	InstanceID string            `json:"instance_id,omitempty"` // Stable native host installation ID
 	Name       string            `json:"name"`                  // Human-readable name
-	HMACSecret string            `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
 	Default    bool              `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
 	Labels     map[string]string `json:"labels,omitempty"`      // Matches allocator.* session tags
 }
@@ -158,14 +132,15 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse  `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                             `json:"has_claude_code_oauth_token"`
 	AuthMode                string                           `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
-	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`               // only keys, not values
-	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"`          // "org/team-slug" format
+	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
+	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`      // only keys, not values
+	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"` // "org/team-slug" format
+	GitHubAppInstallationID string                           `json:"github_app_installation_id,omitempty"`
 	SlackUserID             string                           `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
 	NotificationChannels    []string                         `json:"notification_channels,omitempty"`      // Active notification channels
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
-	GitSync                 *GitSyncConfigResponse           `json:"git_sync,omitempty"`                   // GitHub sync configuration (token redacted)
 	DefaultSessionProfileID string                           `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
+	DefaultAgentType        string                           `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
 	CreatedAt               string                           `json:"created_at"`
 	UpdatedAt               string                           `json:"updated_at"`
 }
@@ -420,6 +395,17 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 	}
 
+	if req.GitHubAppInstallationID != nil {
+		installationID := strings.TrimSpace(*req.GitHubAppInstallationID)
+		if installationID != "" {
+			parsedID, err := strconv.ParseInt(installationID, 10, 64)
+			if err != nil || parsedID <= 0 {
+				return echo.NewHTTPError(http.StatusBadRequest, "github_app_installation_id must be a positive integer")
+			}
+		}
+		settings.SetGitHubAppInstallationID(installationID)
+	}
+
 	// Update Slack User ID
 	if req.SlackUserID != nil {
 		settings.SetSlackUserID(*req.SlackUserID)
@@ -457,10 +443,8 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 	}
 
-	// Update external session managers
-	// For each entry: auto-generate ID if empty, auto-generate HMAC secret if empty.
-	// Existing secrets are preserved when the entry already exists (matched by ID).
-	generatedESMTokens := map[string]string{}
+	// Update already-enrolled external session managers. New registrations are
+	// accepted only through the one-time enrollment-token API.
 	if req.ExternalSessionManagers != nil {
 		existing := make(map[string]entities.ExternalSessionManagerEntry)
 		for _, e := range settings.ExternalSessionManagers() {
@@ -481,89 +465,46 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
 		for _, m := range *req.ExternalSessionManagers {
 			if m.ID == "" {
-				m.ID = uuid.New().String()
+				return echo.NewHTTPError(http.StatusBadRequest, "external session managers must be enrolled with a registration token")
 			}
-			// Preserve existing secret if not provided
-			if m.HMACSecret == "" {
-				if prev, ok := existing[m.ID]; ok {
-					m.HMACSecret = prev.HMACSecret
-				}
-			}
-			// Auto-generate secret if still empty
-			if m.HMACSecret == "" {
-				secret, err := generateSettingsESMSecret(32)
-				if err != nil {
-					log.Printf("[SETTINGS] Failed to generate connection token for ESM %s: %v", m.Name, err)
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate connection token")
-				}
-				m.HMACSecret = secret
-				generatedESMTokens[m.ID] = secret
+			prev, ok := existing[m.ID]
+			if !ok || prev.HMACSecret == "" {
+				return echo.NewHTTPError(http.StatusBadRequest, "external session manager is not enrolled")
 			}
 			entry := entities.ExternalSessionManagerEntry{
 				ID:         m.ID,
 				InstanceID: m.InstanceID,
 				Name:       m.Name,
-				HMACSecret: m.HMACSecret,
+				HMACSecret: prev.HMACSecret,
 				Default:    m.Default,
 				Labels:     m.Labels,
 			}
 			// These fields are owned by the daemon registration/heartbeat API and
 			// must survive a legacy settings update.
-			if prev, ok := existing[m.ID]; ok {
-				entry.PublicURL = prev.PublicURL
-				entry.Version = prev.Version
-				entry.ActiveSessions = prev.ActiveSessions
-				entry.LastHeartbeatAt = prev.LastHeartbeatAt
-			}
+			entry.PublicURL = prev.PublicURL
+			entry.Version = prev.Version
+			entry.ActiveSessions = prev.ActiveSessions
+			entry.LastHeartbeatAt = prev.LastHeartbeatAt
 			updated = append(updated, entry)
+		}
+		// Pending one-time enrollments are not returned by settings responses and
+		// must survive unrelated settings saves.
+		for _, prev := range existing {
+			if prev.HMACSecret == "" && prev.EnrollmentTokenHash != "" {
+				updated = append(updated, prev)
+			}
 		}
 		settings.SetExternalSessionManagers(updated)
 	}
 
-	// Update GitHub sync configuration
-	if req.GitSync != nil {
-		if c.gitSyncKMSKeyARN == "" || c.gitSyncAWSRegion == "" {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub sync encryption is not configured on this proxy")
-		}
-		existing := settings.GitSync()
-		encDEK := ""
-		dekVersion := 0
-		existingToken := ""
-		if existing != nil {
-			encDEK = existing.Encryption.EncryptedDEK
-			dekVersion = existing.Encryption.DEKVersion
-			existingToken = existing.GitHubToken
-		}
-		token := req.GitSync.GitHubToken
-		if token == "" {
-			token = existingToken
-		}
-		branch := req.GitSync.Branch
-		if branch == "" {
-			branch = "main"
-		}
-		rootPath := req.GitSync.RootPath
-		if rootPath == "" {
-			rootPath = "agentapi-config/"
-		}
-		settings.SetGitSync(&entities.GitSyncConfig{
-			Enabled:      req.GitSync.Enabled,
-			RepoFullName: req.GitSync.RepoFullName,
-			Branch:       branch,
-			RootPath:     rootPath,
-			AutoPush:     req.GitSync.AutoPush,
-			GitHubToken:  token,
-			Encryption: entities.SyncEncryptionConfig{
-				KMSKeyARN:    c.gitSyncKMSKeyARN,
-				AWSRegion:    c.gitSyncAWSRegion,
-				EncryptedDEK: encDEK,
-				DEKVersion:   dekVersion,
-			},
-		})
-	}
-
 	if req.DefaultSessionProfileID != nil {
 		settings.SetDefaultSessionProfileID(*req.DefaultSessionProfileID)
+	}
+	if req.DefaultAgentType != nil {
+		if !isValidDefaultAgentType(*req.DefaultAgentType) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid default_agent_type")
+		}
+		settings.SetDefaultAgentType(*req.DefaultAgentType)
 	}
 
 	// Determine and set auth_mode
@@ -580,40 +521,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponseWithESMTokens(settings, generatedESMTokens))
-}
-
-// DeleteGitSync handles DELETE /settings/:name/sync
-// Removes only the GitHub sync configuration from the specified settings.
-func (c *SettingsController) DeleteGitSync(ctx echo.Context) error {
-	user := auth.GetUserFromContext(ctx)
-	if user == nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
-	}
-
-	name := urlutil.DecodeSlashParam(ctx.Param("name"))
-	if name == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
-	}
-
-	if !c.canModify(user, name) {
-		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
-	}
-
-	settings, err := c.repo.FindByName(ctx.Request().Context(), name)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return echo.NewHTTPError(http.StatusNotFound, "Settings not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get settings")
-	}
-
-	settings.SetGitSync(nil)
-	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
-	}
-
-	return ctx.JSON(http.StatusOK, map[string]bool{"deleted": true})
+	return ctx.JSON(http.StatusOK, c.toResponse(settings))
 }
 
 // DeleteSettings handles DELETE /settings/:name
@@ -799,10 +707,6 @@ func (c *SettingsController) determineAuthMode(settings *entities.Settings, requ
 
 // toResponse converts Settings entity to response
 func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsResponse {
-	return c.toResponseWithESMTokens(settings, nil)
-}
-
-func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings, connectionTokens map[string]string) *SettingsResponse {
 	resp := &SettingsResponse{
 		Name:                    settings.Name(),
 		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
@@ -853,39 +757,24 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 	}
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
+	resp.GitHubAppInstallationID = settings.GitHubAppInstallationID()
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()
-
-	if gs := settings.GitSync(); gs != nil {
-		resp.GitSync = &GitSyncConfigResponse{
-			Enabled:        gs.Enabled,
-			RepoFullName:   gs.RepoFullName,
-			Branch:         gs.Branch,
-			RootPath:       gs.RootPath,
-			AutoPush:       gs.AutoPush,
-			HasGitHubToken: gs.GitHubToken != "",
-			Encryption: GitSyncEncryptionResponse{
-				DEKVersion: gs.Encryption.DEKVersion,
-				DEKReady:   gs.Encryption.EncryptedDEK != "",
-			},
-		}
-	}
+	resp.DefaultAgentType = settings.DefaultAgentType()
 
 	// External session managers: never return the HMAC secret — indicate only whether one is set.
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
 		resp.ExternalSessionManagers = make([]ExternalSessionManagerResponse, 0, len(managers))
 		for _, m := range managers {
-			connectionToken := ""
-			if connectionTokens != nil {
-				connectionToken = connectionTokens[m.ID]
+			if m.HMACSecret == "" {
+				continue
 			}
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
 				ID:                 m.ID,
 				InstanceID:         m.InstanceID,
 				Name:               m.Name,
 				HasConnectionToken: m.HMACSecret != "",
-				ConnectionToken:    connectionToken,
 				Default:            m.Default,
 				Labels:             m.Labels,
 				PublicURL:          m.PublicURL,
@@ -897,6 +786,15 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 	}
 
 	return resp
+}
+
+func isValidDefaultAgentType(agentType string) bool {
+	switch agentType {
+	case "", "auto", "claude-acp", "codex-acp", "pi-ollama", "cursor":
+		return true
+	default:
+		return false
+	}
 }
 
 // mergeSecrets merges existing and new secret maps.

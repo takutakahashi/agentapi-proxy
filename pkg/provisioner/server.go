@@ -64,6 +64,8 @@ EOF
 fi
 `
 
+const restartAutoProvisionDelay = 15 * time.Second
+
 // Status represents the provisioning lifecycle state.
 type Status string
 
@@ -133,16 +135,34 @@ func (s *Server) Start(ctx context.Context) error {
 	// Pod restart), so provisioning does not have to wait for network downloads.
 	go s.runStartupScript(ctx)
 
-	// Auto-provision from Secret volume if available (Pod restart case).
+	// Auto-provision from Secret volume if available (Pod restart case). Give
+	// the pull client time to claim an initial provision request first: the
+	// restart Secret intentionally exists before the first Pod is created so it
+	// can survive an early eviction, but it must not start a second agent in the
+	// normal initial-provisioning path.
 	if s.settingsFile != "" {
 		if _, err := os.Stat(s.settingsFile); err == nil {
-			log.Printf("[PROVISIONER] Settings file found at %s – auto-provisioning", s.settingsFile)
+			log.Printf("[PROVISIONER] Settings file found at %s – scheduling restart auto-provisioning", s.settingsFile)
 			settings, err := sessionsettings.LoadSettings(s.settingsFile)
 			if err != nil {
 				log.Printf("[PROVISIONER] Failed to load settings for auto-provisioning: %v", err)
 			} else {
-				s.setStatus(StatusProvisioning, "")
-				go s.runProvision(ctx, settings)
+				go func() {
+					timer := time.NewTimer(restartAutoProvisionDelay)
+					defer timer.Stop()
+					select {
+					case <-ctx.Done():
+						return
+					case <-timer.C:
+					}
+					if !s.claimProvisioning() {
+						status := s.GetStatus()
+						log.Printf("[PROVISIONER] Skipping restart auto-provisioning because status is %s", status)
+						return
+					}
+					log.Printf("[PROVISIONER] No initial provision request claimed; auto-provisioning from %s", s.settingsFile)
+					s.runProvision(ctx, settings)
+				}()
 			}
 		}
 	}
@@ -234,6 +254,18 @@ func (s *Server) GetStatus() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
+}
+
+// claimProvisioning atomically reserves the single provisioning slot.
+func (s *Server) claimProvisioning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != StatusPending {
+		return false
+	}
+	s.status = StatusProvisioning
+	s.message = ""
+	return true
 }
 
 // SetStatusReporter installs a callback invoked on every status transition.

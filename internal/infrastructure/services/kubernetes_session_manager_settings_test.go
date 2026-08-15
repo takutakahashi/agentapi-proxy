@@ -2,12 +2,19 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -62,6 +69,165 @@ func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t 
 	}
 	if got := settings.Files[0].Content; got != `{"tokens":{"access_token":"user-token"}}` {
 		t.Fatalf("credential content = %q, want session user's credentials", got)
+	}
+}
+
+func TestBuildSessionSettings_GitHubSenderCredentialsFallBackToTeam(t *testing.T) {
+	tests := []struct {
+		name               string
+		triggeredUserID    string
+		includeUserSecret  bool
+		wantCredentialBody string
+	}{
+		{
+			name:               "uses triggered user credentials when present",
+			triggeredUserID:    "github-user",
+			includeUserSecret:  true,
+			wantCredentialBody: `{"tokens":{"access_token":"triggered-token"}}`,
+		},
+		{
+			name:               "falls back when triggered user credentials are missing",
+			triggeredUserID:    "github-user",
+			wantCredentialBody: `{"tokens":{"access_token":"team-token"}}`,
+		},
+		{
+			name:               "falls back when triggered user is unresolved",
+			wantCredentialBody: `{"tokens":{"access_token":"team-token"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := []runtime.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-org-team-a", Namespace: "test-ns"},
+					Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+						Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: `{"tokens":{"access_token":"team-token"}}`,
+					}}),
+				},
+			}
+			if tt.includeUserSecret {
+				objects = append(objects, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-github-user", Namespace: "test-ns"},
+					Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+						Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: tt.wantCredentialBody,
+					}}),
+				})
+			}
+
+			k8sClient := fake.NewSimpleClientset(objects...)
+			cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+				Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000, PVCEnabled: boolPtrForTest(false),
+			}}
+			manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+			if err != nil {
+				t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+			}
+			manager.namespace = "test-ns"
+			req := &entities.RunServerRequest{
+				UserID: "webhook-owner", TriggeredUserID: tt.triggeredUserID,
+				Scope: entities.ScopeTeam, TeamID: "org/team-a", CredentialSource: "github_sender",
+			}
+			session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+			settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+			if len(settings.Files) != 1 {
+				t.Fatalf("managed files count = %d, want 1", len(settings.Files))
+			}
+			if got := settings.Files[0].Content; got != tt.wantCredentialBody {
+				t.Fatalf("credential content = %q, want %q", got, tt.wantCredentialBody)
+			}
+		})
+	}
+}
+
+func TestBuildSessionSettings_GitHubSenderAuthAndEnvironmentOverrideTeam(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+
+	teamSettings := entities.NewSettings("org/team-a")
+	teamSettings.SetEnvVars(map[string]string{"SHARED": "team", "TEAM_ONLY": "team-value"})
+	teamSettings.SetAuthMode(entities.AuthModeBedrock)
+	senderSettings := entities.NewSettings("github-user")
+	senderSettings.SetEnvVars(map[string]string{"SHARED": "sender", "SENDER_ONLY": "sender-value"})
+	senderSettings.SetAuthMode(entities.AuthModeOAuth)
+	senderSettings.SetClaudeCodeOAuthToken("sender-oauth-token")
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
+		"org/team-a":  teamSettings,
+		"github-user": senderSettings,
+	}})
+
+	req := &entities.RunServerRequest{
+		UserID: "webhook-owner", TriggeredUserID: "github-user",
+		Scope: entities.ScopeTeam, TeamID: "org/team-a", CredentialSource: "github_sender",
+	}
+	session := NewKubernetesSession("test-session", req,
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	for key, want := range map[string]string{
+		"SHARED": "sender", "TEAM_ONLY": "team-value", "SENDER_ONLY": "sender-value",
+		"CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_OAUTH_TOKEN": "sender-oauth-token",
+	} {
+		if got := settings.Env[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestBuildSessionSettings_ProfileEnvironmentOverridesTeamBedrockAndRequestOverridesProfile(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+
+	teamSettings := entities.NewSettings("org/team-a")
+	teamSettings.SetEnvVars(map[string]string{"SHARED": "team", "TEAM_ONLY": "team-value"})
+	teamSettings.SetAuthMode(entities.AuthModeBedrock)
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("team-model")
+	teamSettings.SetBedrock(bedrock)
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
+		"org/team-a": teamSettings,
+	}})
+
+	req := &entities.RunServerRequest{
+		UserID: "test-user", Scope: entities.ScopeTeam, TeamID: "org/team-a",
+		ProfileEnvironment: map[string]string{
+			"CLAUDE_CODE_USE_BEDROCK": "0", "ANTHROPIC_MODEL": "profile-model",
+			"SHARED": "profile", "PROFILE_ONLY": "profile-value",
+		},
+		Environment: map[string]string{"SHARED": "request"},
+	}
+	session := NewKubernetesSession("test-session", req,
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	for key, want := range map[string]string{
+		"CLAUDE_CODE_USE_BEDROCK": "0", "ANTHROPIC_MODEL": "profile-model",
+		"TEAM_ONLY": "team-value", "PROFILE_ONLY": "profile-value", "SHARED": "request",
+	} {
+		if got := settings.Env[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -189,6 +355,72 @@ func TestBuildSessionSettings_TeamSettingsUsesRepositoryEnvVars(t *testing.T) {
 	models := provider["models"].([]interface{})
 	if got := models[0].(map[string]interface{})["id"]; got != "glm-5.2:cloud" {
 		t.Fatalf("custom model ID = %v", got)
+	}
+}
+
+func TestBuildSessionSettings_TeamGitHubInstallationIDCreatesInitialToken(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemData := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v3/app/installations/4242/access_tokens" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"team-installation-token"}`))
+	}))
+	defer api.Close()
+	t.Setenv("GITHUB_API", api.URL+"/")
+
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-auth", Namespace: "test-ns"},
+			Data: map[string][]byte{
+				"GITHUB_APP_ID":  []byte("1234"),
+				"GITHUB_APP_PEM": pemData,
+				"GITHUB_TOKEN":   []byte("shared-token"),
+			},
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:        "test-ns",
+		Image:            "test-image:latest",
+		BasePort:         9000,
+		PVCEnabled:       boolPtrForTest(false),
+		GitHubSecretName: "github-auth",
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.namespace = "test-ns"
+	teamSettings := entities.NewSettings("org/team-a")
+	teamSettings.SetGitHubAppInstallationID("4242")
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
+		"org/team-a": teamSettings,
+	}})
+
+	session := NewKubernetesSession("test-session", &entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, &entities.RunServerRequest{
+		UserID: "test-user",
+		Scope:  entities.ScopeTeam,
+		TeamID: "org/team-a",
+	}, nil)
+
+	if got := settings.Env["GITHUB_TOKEN"]; got != "team-installation-token" {
+		t.Fatalf("GITHUB_TOKEN = %q, want team installation token", got)
+	}
+	if got := settings.Env["GITHUB_INSTALLATION_ID"]; got != "4242" {
+		t.Fatalf("GITHUB_INSTALLATION_ID = %q, want 4242", got)
 	}
 }
 
@@ -410,5 +642,167 @@ func TestBuildPiModelsJSONRequiresProviderModelAndBaseURL(t *testing.T) {
 	})
 	if got != nil {
 		t.Fatalf("expected incomplete custom model config to be ignored, got %#v", got)
+	}
+}
+
+// fakeCredentialsRepository is a test CredentialsRepository that returns
+// canned managed files for a given name.
+type fakeCredentialsRepository struct {
+	filesByName map[string][]sessionsettings.ManagedFile
+	errByName   map[string]error
+}
+
+func (f *fakeCredentialsRepository) Save(ctx context.Context, c *entities.Credentials) error {
+	return nil
+}
+func (f *fakeCredentialsRepository) FindByName(ctx context.Context, name string) (*entities.Credentials, error) {
+	if err, ok := f.errByName[name]; ok {
+		return nil, err
+	}
+	files, ok := f.filesByName[name]
+	if !ok {
+		return nil, fmt.Errorf("credentials not found: %s", name)
+	}
+	creds := entities.NewCredentials(name, nil)
+	creds.SetFiles(files)
+	return creds, nil
+}
+func (f *fakeCredentialsRepository) Delete(ctx context.Context, name string) error { return nil }
+func (f *fakeCredentialsRepository) Exists(ctx context.Context, name string) (bool, error) {
+	_, ok := f.filesByName[name]
+	return ok, nil
+}
+func (f *fakeCredentialsRepository) List(ctx context.Context) ([]*entities.Credentials, error) {
+	return nil, nil
+}
+
+// TestBuildSessionSettings_CredentialsRepoMergesKVAndLegacySecret verifies that
+// managed credential files are read from the credentials repository (KV store)
+// and that legacy files only present in the agentapi-agent-files-* Kubernetes
+// Secret are merged in so they are not lost during the KV transition.
+func TestBuildSessionSettings_CredentialsRepoMergesKVAndLegacySecret(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-test-user", Namespace: "test-ns"},
+			Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeClaudeCredentials],
+				Content: `{"legacy":"claude-credentials"}`,
+			}}),
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	manager.SetCredentialsRepository(&fakeCredentialsRepository{
+		filesByName: map[string][]sessionsettings.ManagedFile{
+			"test-user": {{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+				Content: `{"tokens":{"access_token":"codex-token"}}`,
+			}},
+		},
+	})
+
+	session := NewKubernetesSession("test-session", &entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, &entities.RunServerRequest{
+		UserID: "test-user",
+	}, nil)
+
+	byPath := map[string]string{}
+	for _, f := range settings.Files {
+		byPath[f.Path] = f.Content
+	}
+	if got, ok := byPath[sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth]]; !ok || got != `{"tokens":{"access_token":"codex-token"}}` {
+		t.Fatalf("codex auth.json from KV missing or wrong: %#v", byPath)
+	}
+	if got, ok := byPath[sessionsettings.ManagedFileTypes[sessionsettings.FileTypeClaudeCredentials]]; !ok || got != `{"legacy":"claude-credentials"}` {
+		t.Fatalf("legacy claude credentials from K8s Secret missing or wrong: %#v", byPath)
+	}
+}
+
+// TestResolveAutoAgentType_CredentialsRepoCodexAuth verifies that auto agent
+// type resolution reads ~/.codex/auth.json from the credentials repository
+// (KV store) instead of only the Kubernetes Secret.
+func TestResolveAutoAgentType_CredentialsRepoCodexAuth(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		// No agentapi-agent-files Secret exists in K8s; the credential is only in KV.
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	manager.SetCredentialsRepository(&fakeCredentialsRepository{
+		filesByName: map[string][]sessionsettings.ManagedFile{
+			"test-user": {{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+				Content: `{"tokens":{"access_token":"codex-token"}}`,
+			}},
+		},
+	})
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
+		UserID:    "test-user",
+		AgentType: "auto",
+	})
+	if got != "codex-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}
+
+func TestResolveAutoAgentType_UsesTeamDefaultWhenAgentTypeIsOmitted(t *testing.T) {
+	teamSettings := entities.NewSettings("org/team")
+	teamSettings.SetDefaultAgentType("codex-acp")
+	manager := &KubernetesSessionManager{
+		settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{
+			"org/team": teamSettings,
+		}},
+	}
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
+		Scope:  entities.ScopeTeam,
+		TeamID: "org/team",
+	})
+	if got != "codex-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}
+
+func TestResolveAutoAgentType_UsesPersonalDefaultWhenAgentTypeIsOmitted(t *testing.T) {
+	personalSettings := entities.NewSettings("test-user")
+	personalSettings.SetDefaultAgentType("codex-acp")
+	manager := &KubernetesSessionManager{
+		settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{
+			"test-user": personalSettings,
+		}},
+	}
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
+		Scope:  entities.ScopeUser,
+		UserID: "test-user",
+	})
+	if got != "codex-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}
+
+func TestResolveAutoAgentType_DefaultsToAutoWhenAgentTypeIsOmitted(t *testing.T) {
+	manager := &KubernetesSessionManager{}
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{})
+	if got != "claude-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want claude-acp", got)
 	}
 }

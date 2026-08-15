@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -112,7 +113,7 @@ func TestBuildSessionSettings_OneshotHookInjected(t *testing.T) {
 				continue
 			}
 			cmd, _ := hMap["command"].(string)
-			if cmd == "agentapi-proxy client delete-session --confirm" {
+			if strings.Contains(cmd, "client delete-session --confirm") {
 				found = true
 			}
 		}
@@ -129,7 +130,7 @@ func TestBuildSessionSettings_OneshotHookInjected(t *testing.T) {
 			if inner, ok := hooksInnerRaw.([]map[string]interface{}); ok {
 				for _, h := range inner {
 					cmd, _ := h["command"].(string)
-					if cmd == "agentapi-proxy client delete-session --confirm" {
+					if strings.Contains(cmd, "client delete-session --confirm") {
 						found = true
 					}
 				}
@@ -212,7 +213,7 @@ func TestOneshotSecretCreatedWithCorrectFormat(t *testing.T) {
 		t.Fatalf("Expected first inner hook to be map, got %T", innerHooks[0])
 	}
 
-	if hook["command"] != "agentapi-proxy client delete-session --confirm" {
+	if hook["command"] != `"${CCPLANT_BINARY_PATH:-ccplant}" client delete-session --confirm` {
 		t.Errorf("Expected delete-session command, got: %v", hook["command"])
 	}
 }

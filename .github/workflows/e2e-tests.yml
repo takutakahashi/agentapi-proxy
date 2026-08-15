@@ -58,10 +58,10 @@ jobs:
         pwd
         ls -la
         ls -la bin/ || echo "bin directory not found"
-        ls -la ./bin/agentapi-proxy || echo "Binary not found in ./bin/"
-        file ./bin/agentapi-proxy || echo "File command failed"
+        ls -la ./bin/ccplant || echo "Binary not found in ./bin/"
+        file ./bin/ccplant || echo "File command failed"
         # Set executable permissions just in case
-        chmod +x ./bin/agentapi-proxy || true
+        chmod +x ./bin/ccplant || true
 
     - name: Run E2E tests
       env:

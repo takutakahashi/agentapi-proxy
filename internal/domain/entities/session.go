@@ -75,6 +75,8 @@ type DockerRegistry struct {
 
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
+	// ResumeFrom restores ACP conversation state saved by a previous session ID.
+	ResumeFrom string `json:"resume_from,omitempty"`
 	// Message is the initial message to send to the agent after session starts
 	Message string `json:"message,omitempty"`
 	// GithubToken is a GitHub token to use for authentication instead of GitHub App
@@ -120,7 +122,7 @@ type SessionParams struct {
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
 	// CredentialSource selects which managed credentials are injected into the session.
-	// Valid values are "session_user", "team", and "none". Empty preserves the
+	// Valid values are "session_user", "triggered_user", "github_sender", "team", and "none". Empty preserves the
 	// legacy behavior (session user for user scope, none for team scope).
 	CredentialSource string `json:"credential_source,omitempty"`
 }
@@ -145,7 +147,9 @@ type UpdateSessionAnnotationsRequest struct {
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
 	Environment map[string]string `json:"environment,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	// ProfileEnvironment is resolved from SessionProfileID and is never accepted from the API.
+	ProfileEnvironment map[string]string `json:"-"`
+	Tags               map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters
 	Params *SessionParams `json:"params,omitempty"`
 	// Scope defines the ownership scope ("user" or "team"). Defaults to "user".
@@ -173,8 +177,14 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
-	UserID                   string
-	Environment              map[string]string
+	ResumeFrom string
+	UserID     string
+	// TriggeredUserID identifies the external actor that caused a trigger-backed session.
+	// It is distinct from UserID, which remains the trigger configuration owner.
+	TriggeredUserID string
+	Environment     map[string]string
+	// ProfileEnvironment is applied above team/user settings and below explicit Environment.
+	ProfileEnvironment       map[string]string
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo
 	InitialMessage           string
@@ -200,6 +210,9 @@ type RunServerRequest struct {
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).
 	ProvisionSettings *sessionsettings.SessionSettings
+	// ParentRuntime is internal bootstrap material for a Session Pod that
+	// connects directly to the parent proxy. It is never accepted from user JSON.
+	ParentRuntime *sessionsettings.ParentRuntimeConfig
 	// SessionTTL is the duration after the last message before this session is auto-deleted.
 	// Stored as a Go duration string (e.g. "48h"). Empty means use the global cleanup TTL.
 	SessionTTL string

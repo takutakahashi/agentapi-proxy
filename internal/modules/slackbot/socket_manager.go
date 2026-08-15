@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	repoports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"k8s.io/client-go/kubernetes"
@@ -42,6 +43,7 @@ type SlackSocketManager struct {
 
 	reconcileInterval    time.Duration
 	leaderElectionConfig schedule.LeaderElectionConfig
+	redisClient          redis.UniversalClient
 
 	mu      sync.Mutex
 	running map[string]runningEntry // botKey → entry
@@ -62,6 +64,7 @@ type SlackSocketManagerConfig struct {
 	DefaultBotTokenSecretKey  string
 	ReconcileInterval         time.Duration
 	LeaderElectionConfig      schedule.LeaderElectionConfig
+	RedisClient               redis.UniversalClient
 }
 
 // NewSlackSocketManager creates a new SlackSocketManager
@@ -98,6 +101,7 @@ func NewSlackSocketManager(
 		defaultBotTokenSecretKey:  cfg.DefaultBotTokenSecretKey,
 		reconcileInterval:         cfg.ReconcileInterval,
 		leaderElectionConfig:      cfg.LeaderElectionConfig,
+		redisClient:               cfg.RedisClient,
 		running:                   make(map[string]runningEntry),
 	}
 }
@@ -211,7 +215,7 @@ func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey str
 	leaseName := slackSocketLeasePrefix + sanitizeLeaseName(botKey)
 	electionConfig := m.leaderElectionConfig
 	electionConfig.LeaseName = leaseName
-	elector := schedule.NewLeaderElector(m.kubeClient, electionConfig)
+	elector := schedule.NewLeaderElector(m.redisClient, electionConfig)
 
 	childCtx, cancel := context.WithCancel(ctx)
 	entryID := uuid.New().String()

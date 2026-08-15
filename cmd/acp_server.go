@@ -141,7 +141,7 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 		if data, err := os.ReadFile(sessionFile); err == nil {
 			savedID := strings.TrimSpace(string(data))
 			if savedID != "" {
-				if err := acpClient.LoadSession(ctx, savedID); err != nil {
+				if err := acpClient.LoadSession(ctx, savedID, cwd, nil); err != nil {
 					log.Printf("[acp-server] session/load failed (%v), creating new session", err)
 				} else {
 					log.Printf("[acp-server] restored previous session (session=%s)", acpClient.SessionID())

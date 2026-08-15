@@ -2,36 +2,14 @@ package slackbot_cleanup
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-)
-
-const (
-	// slackbotIDLabelKey is the Kubernetes label key used to identify Slackbot sessions.
-	// Sessions created by the Slackbot have this label set to the bot ID.
-	slackbotIDLabelKey = "agentapi.proxy/tag-slackbot_id"
-
-	// lastMessageAtAnnotation is the annotation key that stores the RFC3339 timestamp
-	// of the last message received for a session.
-	lastMessageAtAnnotation = "agentapi.proxy/last-message-at"
-
-	// slackLastMessageAtAnnotation is the legacy annotation key retained for backward
-	// compatibility with sessions created before the unified last-message-at was introduced.
-	slackLastMessageAtAnnotation = "agentapi.proxy/slack-last-message-at"
-
-	// sessionIDLabel is the label key holding the session ID on Kubernetes Services.
-	sessionIDLabel = "agentapi.proxy/session-id"
-
-	// sessionTTLAnnotation stores the per-session TTL as a Go duration string (e.g. "48h").
-	// When present, this overrides the global CleanupWorkerConfig.SessionTTL for that session.
-	sessionTTLAnnotation = "agentapi.proxy/session-ttl"
 )
 
 // CleanupWorkerConfig holds configuration for the Slackbot session cleanup worker.
@@ -67,13 +45,10 @@ func DefaultCleanupWorkerConfig() CleanupWorkerConfig {
 }
 
 // CleanupWorker periodically deletes Slackbot sessions whose last message is older
-// than SessionTTL. It uses the agentapi.proxy/last-message-at annotation
-// (with fallback to the legacy agentapi.proxy/slack-last-message-at annotation)
-// to determine when the last message occurred.
+// than SessionTTL. It uses the agentapi.proxy/last-message-at annotation to
+// determine when the last message occurred.
 type CleanupWorker struct {
 	sessionManager portrepos.SessionManager
-	k8sClient      kubernetes.Interface
-	namespace      string
 	config         CleanupWorkerConfig
 
 	stopCh  chan struct{}
@@ -85,14 +60,10 @@ type CleanupWorker struct {
 // NewCleanupWorker creates a new CleanupWorker.
 func NewCleanupWorker(
 	sessionManager portrepos.SessionManager,
-	k8sClient kubernetes.Interface,
-	namespace string,
 	config CleanupWorkerConfig,
 ) *CleanupWorker {
 	return &CleanupWorker{
 		sessionManager: sessionManager,
-		k8sClient:      k8sClient,
-		namespace:      namespace,
 		config:         config,
 		stopCh:         make(chan struct{}),
 	}
@@ -183,45 +154,18 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		dryRunPrefix = "[DRY-RUN] "
 	}
 
-	// List Services that have the slackbot_id label (value-independent existence check).
-	// The label selector "agentapi.proxy/tag-slackbot_id" matches any Service that has
-	// this label set, regardless of its value.
-	labelSelector := "app.kubernetes.io/managed-by=agentapi-proxy," +
-		"app.kubernetes.io/name=agentapi-session," +
-		slackbotIDLabelKey
-
-	svcList, err := w.k8sClient.CoreV1().Services(w.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		log.Printf("[SLACKBOT_CLEANUP] %sFailed to list Slackbot sessions: %v", dryRunPrefix, err)
-		return
-	}
-
-	if len(svcList.Items) == 0 {
-		return
-	}
-
-	log.Printf("[SLACKBOT_CLEANUP] %sScanning %d Slackbot session(s) for TTL expiry",
-		dryRunPrefix, len(svcList.Items))
+	sessions := w.sessionManager.ListSessions(entities.SessionFilter{})
 
 	deleted := 0
-	for _, svc := range svcList.Items {
-		// Defensive check: verify the service actually carries the slackbot label.
-		if svc.Labels[slackbotIDLabelKey] == "" {
-			log.Printf("[SLACKBOT_CLEANUP] %sService %s does not have slackbot label, skipping", dryRunPrefix, svc.Name)
+	for _, session := range sessions {
+		if session.Tags()["slackbot_id"] == "" {
 			continue
 		}
-
-		sessionID := svc.Labels[sessionIDLabel]
-		if sessionID == "" {
-			log.Printf("[SLACKBOT_CLEANUP] %sService %s missing session-id label, skipping", dryRunPrefix, svc.Name)
-			continue
-		}
+		sessionID := session.ID()
 
 		// Resolve effective TTL: per-session annotation takes priority over global config.
 		effectiveTTL := w.config.SessionTTL
-		if ttlStr, ok := svc.Annotations[sessionTTLAnnotation]; ok && ttlStr != "" {
+		if ttlStr := session.Tags()["session_ttl"]; ttlStr != "" {
 			if parsed, err := time.ParseDuration(ttlStr); err == nil {
 				effectiveTTL = parsed
 			} else {
@@ -231,10 +175,9 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		threshold := now.Add(-effectiveTTL)
 
 		// Determine the reference time for TTL calculation from last-message-at.
-		refTime, err := w.resolveReferenceTime(svc.Annotations)
-		if err != nil {
-			log.Printf("[SLACKBOT_CLEANUP] %sSession %s: cannot determine reference time (%v), skipping", dryRunPrefix, sessionID, err)
-			continue
+		refTime := session.LastMessageAt()
+		if refTime.IsZero() {
+			refTime = session.StartedAt()
 		}
 
 		if refTime.After(threshold) {
@@ -281,46 +224,32 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 		dryRunPrefix = "[DRY-RUN] "
 	}
 
-	labelSelector := "app.kubernetes.io/managed-by=agentapi-proxy," +
-		"app.kubernetes.io/name=agentapi-session"
-
-	svcList, err := w.k8sClient.CoreV1().Services(w.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		log.Printf("[SESSION_TTL_CLEANUP] %sFailed to list sessions: %v", dryRunPrefix, err)
-		return
-	}
-
+	sessions := w.sessionManager.ListSessions(entities.SessionFilter{})
 	deleted := 0
-	for _, svc := range svcList.Items {
+	for _, session := range sessions {
 		// Skip Slackbot sessions — they are managed by pruneStaleSlackbotSessions.
-		if svc.Labels[slackbotIDLabelKey] != "" {
+		if session.Tags()["slackbot_id"] != "" {
 			continue
 		}
 
-		ttlStr, ok := svc.Annotations[sessionTTLAnnotation]
-		if !ok || ttlStr == "" {
+		ttlStr := session.Tags()["session_ttl"]
+		if ttlStr == "" {
 			continue
 		}
 
 		ttl, err := time.ParseDuration(ttlStr)
 		if err != nil {
-			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: invalid session-ttl %q: %v", dryRunPrefix, svc.Labels[sessionIDLabel], ttlStr, err)
+			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: invalid session-ttl %q: %v", dryRunPrefix, session.ID(), ttlStr, err)
 			continue
 		}
 
-		sessionID := svc.Labels[sessionIDLabel]
-		if sessionID == "" {
-			continue
-		}
+		sessionID := session.ID()
 
 		threshold := now.Add(-ttl)
 
-		refTime, err := w.resolveReferenceTime(svc.Annotations)
-		if err != nil {
-			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: cannot determine reference time (%v), skipping", dryRunPrefix, sessionID, err)
-			continue
+		refTime := session.LastMessageAt()
+		if refTime.IsZero() {
+			refTime = session.StartedAt()
 		}
 
 		if refTime.After(threshold) {
@@ -354,22 +283,6 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	}
 }
 
-// resolveReferenceTime returns the reference time for TTL calculation.
-// It prefers the unified last-message-at annotation and falls back to the
-// legacy slack-last-message-at annotation for sessions created before the
-// unified annotation was introduced.  Sessions without either annotation
-// are skipped to avoid inadvertently deleting unrelated sessions.
-func (w *CleanupWorker) resolveReferenceTime(annotations map[string]string) (time.Time, error) {
-	for _, key := range []string{lastMessageAtAnnotation, slackLastMessageAtAnnotation} {
-		if v, ok := annotations[key]; ok && v != "" {
-			if t, err := time.Parse(time.RFC3339, v); err == nil {
-				return t, nil
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("no %s annotation found", lastMessageAtAnnotation)
-}
-
 // LeaderCleanupWorker combines leader election with the Slackbot cleanup worker.
 // Only the elected leader runs the cleanup loop, preventing duplicate deletions
 // in multi-replica deployments.
@@ -381,16 +294,15 @@ type LeaderCleanupWorker struct {
 // NewLeaderCleanupWorker creates a new LeaderCleanupWorker.
 func NewLeaderCleanupWorker(
 	sessionManager portrepos.SessionManager,
-	k8sClient kubernetes.Interface,
-	namespace string,
+	redisClient redis.UniversalClient,
 	workerConfig CleanupWorkerConfig,
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderCleanupWorker {
 	// Use a distinct lease name so this worker does not compete with the schedule worker.
-	electionConfig.LeaseName = "agentapi-slackbot-cleanup-worker"
+	electionConfig.LeaseName = schedule.SlackbotCleanupWorkerLeaseName
 
-	worker := NewCleanupWorker(sessionManager, k8sClient, namespace, workerConfig)
-	elector := schedule.NewLeaderElector(k8sClient, electionConfig)
+	worker := NewCleanupWorker(sessionManager, workerConfig)
+	elector := schedule.NewLeaderElector(redisClient, electionConfig)
 
 	return &LeaderCleanupWorker{
 		worker:  worker,

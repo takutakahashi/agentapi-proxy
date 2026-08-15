@@ -47,16 +47,59 @@ make build
 docker pull ghcr.io/takutakahashi/agentapi-proxy:latest
 ```
 
+### API-only container
+
+Use the API-only image when agent execution and session tooling are hosted by
+separate workers/session managers. The image contains only the statically linked
+`ccplant` binary, CA certificates, and timezone data; it runs as UID/GID 999 and
+does not include Claude, Codex, Cursor, Docker, mise, uv, GitHub MCP, otelcol,
+Git, or shell-based session tooling.
+
+```bash
+# Build locally (linux/amd64 or linux/arm64)
+docker build --target api -t ccplant-api:local backend
+
+# Run with the default file-backed store
+docker run --rm -p 8080:8080 \
+  -e AGENTAPI_KV_STORE_BACKEND=libsql \
+  -e AGENTAPI_KV_STORE_DATABASE_URL=file:///tmp/agentapi-api.db \
+  ccplant-api:local
+
+curl --fail http://localhost:8080/health
+```
+
+Production deployments should set `AGENTAPI_KV_STORE_BACKEND` and
+`AGENTAPI_KV_STORE_DATABASE_URL` (plus `AGENTAPI_KV_STORE_AUTH_TOKEN` when the
+database requires one). Set `AGENTAPI_SESSION_MANAGER_API_URL` and
+`AGENTAPI_SESSION_MANAGER_API_TOKEN` when session execution is remote.
+Authentication, Redis, encryption, asset storage, and provider-specific environment variables remain
+feature-dependent; the Helm chart renders these from `api.*` values. Mount a
+JSON/YAML config and add `server --config /path/to/config` only when file-based
+configuration is preferred. Static API/OpenAPI content is embedded in the Go
+binary, so `backend/public` and source configuration examples are not copied.
+
+The published multi-architecture image is
+`ghcr.io/ccplant/ccplant-api:<release-tag>`. The existing
+`ccplant-backend` image remains the session/runtime default and is required by
+session-manager, provisioner, and direct/local session modes. The Helm chart
+uses `ccplant-api` for the backend API and worker Deployments by default.
+Session Pod images can be overridden with the Helm `kubernetesSession.image`
+value (or `sessionManager.kubernetesSession.image` for the dedicated manager),
+and with `AGENTAPI_K8S_SESSION_IMAGE` when running without Helm.
+
 ## Usage
+
+Grafana Cloud Application Observability 向けの OpenTelemetry 設定は
+[Grafana Cloud APM setup](../docs/grafana-cloud-apm.md) を参照してください。
 
 ### Starting the Server
 
 ```bash
 # Using the built binary
-./bin/agentapi-proxy server
+./bin/ccplant server
 
 # With custom configuration
-./bin/agentapi-proxy server --config config.json --port 8080 --verbose
+./bin/ccplant server --config config.json --port 8080 --verbose
 
 # Using Docker
 docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakahashi/agentapi-proxy:latest server
@@ -67,6 +110,67 @@ docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakah
 - `--port, -p`: Port to listen on (default: 8080)
 - `--config, -c`: Configuration file path (default: config.json)
 - `--verbose, -v`: Enable verbose logging
+
+### Checking a Helm Installation
+
+Use `doctor` to inspect the latest Helm release revision and verify every
+Kubernetes Secret referenced by its user-supplied values. The command checks
+that each Secret exists and that referenced keys contain non-empty data. It
+never prints Secret values.
+
+```bash
+agentapi-proxy doctor \
+	--namespace agentapi-ui
+```
+
+By default, both the `agentapi-proxy` and `agentapi-ui` releases are checked.
+Use one or more `--release` flags to select specific releases:
+
+```bash
+agentapi-proxy doctor -n agentapi-ui \
+  --release agentapi-proxy \
+  --release agentapi-ui
+```
+
+The command uses the standard Kubernetes client configuration resolution
+(in-cluster credentials or `KUBECONFIG`) and exits non-zero if a release or
+startup Deployment is unavailable, or if a startup-required Secret, key, or
+value is missing. Secrets for optional features such as GitHub, VAPID, SCIA,
+Slack, and ingress TLS are reported as `WARN` when incomplete. Sensitive-looking
+literal values and missing Service endpoints are also non-blocking warnings.
+
+### Planning a Helm Chart Migration
+
+Use the read-only migration preflight before moving split backend/frontend
+releases to the `ccplant` chart:
+
+```bash
+agentapi-proxy helm migrate plan \
+  --namespace agentapi-ui \
+  --version 0.3.2 \
+  --values-out ccplant-shadow-values.yaml
+```
+
+The command checks the stable `control` Service, shared session RBAC, referenced
+Secrets, runtime resource ownership, PVCs, and legacy session callbacks. It
+generates mode-`0600` shadow values and prints suggested Helm/kubectl commands,
+but never changes the cluster or executes those commands. A blocking finding
+causes a non-zero exit status. Use `--output json` or `--output yaml` for
+automation.
+
+After the shadow release is installed, verify it without changing routing:
+
+```bash
+agentapi-proxy helm migrate verify \
+  --namespace agentapi-ui \
+  --target-release ccplant
+```
+
+`verify` checks rollout readiness, Service endpoints, `/health` through the
+Kubernetes API Service proxy, current `control` routing, runtime resources, and
+the shared release-independent worker Leases. Run it once during shadowing and
+again after switching `control`; the reported phase changes from `shadow` to
+`cutover`.
 
 ### Configuration
 
@@ -306,6 +410,9 @@ Scripts are embedded in the binary and extracted to temporary files at runtime.
 
 Sessions can receive custom environment variables:
 
+- **CCPLANT_BINARY_PATH**: Path to the proxy executable used by containers,
+  provisioners, ACP startup commands, and generated hooks. Defaults to
+  `agentapi-proxy`.
 - **GITHUB_TOKEN**: GitHub personal access token
 - **WORKSPACE_NAME**: Custom workspace identifier  
 - **DEBUG**: Enable debug mode for agentapi

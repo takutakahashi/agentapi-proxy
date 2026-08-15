@@ -48,15 +48,16 @@ type settingsJSON struct {
 	Marketplaces            map[string]*marketplaceJSON            `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken    string                                 `json:"claude_code_oauth_token,omitempty"`
 	AuthMode                string                                 `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
-	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`                  // plain env vars (legacy / noop)
-	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"`        // encrypted env vars
-	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`         // "org/team-slug" format
+	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`    // plugin@marketplace format
+	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`           // plain env vars (legacy / noop)
+	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"` // encrypted env vars
+	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`  // "org/team-slug" format
+	GitHubAppInstallationID string                                 `json:"github_app_installation_id,omitempty"`
 	SlackUserID             string                                 `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
-	GitSync                 *gitSyncJSON                           `json:"git_sync,omitempty"`
 	DefaultSessionProfileID string                                 `json:"default_session_profile_id,omitempty"`
+	DefaultAgentType        string                                 `json:"default_agent_type,omitempty"`
 	CreatedAt               time.Time                              `json:"created_at"`
 	UpdatedAt               time.Time                              `json:"updated_at"`
 }
@@ -84,26 +85,6 @@ type mcpServerJSON struct {
 // marketplaceJSON is the JSON representation of a single marketplace
 type marketplaceJSON struct {
 	URL string `json:"url"`
-}
-
-// syncEncryptionConfigJSON is the JSON representation of sync encryption config
-type syncEncryptionConfigJSON struct {
-	KMSKeyARN    string `json:"kms_key_arn"`
-	AWSRegion    string `json:"aws_region"`
-	EncryptedDEK string `json:"encrypted_dek,omitempty"`
-	DEKVersion   int    `json:"dek_version,omitempty"`
-}
-
-// gitSyncJSON is the JSON representation of GitHub sync configuration
-type gitSyncJSON struct {
-	Enabled      bool                     `json:"enabled"`
-	RepoFullName string                   `json:"repo_full_name"`
-	Branch       string                   `json:"branch"`
-	RootPath     string                   `json:"root_path"`
-	AutoPush     bool                     `json:"auto_push"`
-	GitHubToken  string                   `json:"github_token,omitempty"`
-	Encryption   syncEncryptionConfigJSON `json:"encryption"`
-	LastPushedAt *time.Time               `json:"last_pushed_at,omitempty"`
 }
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
@@ -162,7 +143,14 @@ func (r *KubernetesSettingsRepository) Save(ctx context.Context, settings *entit
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			// Update existing
+			// Preserve the current resource version for optimistic concurrency.
+			// This is required by Kubernetes and by KV-store adapters such as
+			// libSQL, which map ResourceVersion to their record version.
+			existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("failed to get existing settings secret: %w", getErr)
+			}
+			secret.ResourceVersion = existing.ResourceVersion
 			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to update settings secret: %w", err)
@@ -347,6 +335,9 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if preferredTeamID := settings.PreferredTeamID(); preferredTeamID != "" {
 		sj.PreferredTeamID = preferredTeamID
 	}
+	if installationID := settings.GitHubAppInstallationID(); installationID != "" {
+		sj.GitHubAppInstallationID = installationID
+	}
 
 	if slackUserID := settings.SlackUserID(); slackUserID != "" {
 		sj.SlackUserID = slackUserID
@@ -360,29 +351,11 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 		sj.ExternalSessionManagers = managers
 	}
 
-	if gitSync := settings.GitSync(); gitSync != nil {
-		j := &gitSyncJSON{
-			Enabled:      gitSync.Enabled,
-			RepoFullName: gitSync.RepoFullName,
-			Branch:       gitSync.Branch,
-			RootPath:     gitSync.RootPath,
-			AutoPush:     gitSync.AutoPush,
-			GitHubToken:  gitSync.GitHubToken,
-			Encryption: syncEncryptionConfigJSON{
-				KMSKeyARN:    gitSync.Encryption.KMSKeyARN,
-				AWSRegion:    gitSync.Encryption.AWSRegion,
-				EncryptedDEK: gitSync.Encryption.EncryptedDEK,
-				DEKVersion:   gitSync.Encryption.DEKVersion,
-			},
-		}
-		if !gitSync.LastPushedAt.IsZero() {
-			j.LastPushedAt = &gitSync.LastPushedAt
-		}
-		sj.GitSync = j
-	}
-
 	if id := settings.DefaultSessionProfileID(); id != "" {
 		sj.DefaultSessionProfileID = id
+	}
+	if agentType := settings.DefaultAgentType(); agentType != "" {
+		sj.DefaultAgentType = agentType
 	}
 
 	return json.Marshal(sj)
@@ -519,6 +492,10 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 		// Reset updatedAt since SetPreferredTeamID updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
+	if sj.GitHubAppInstallationID != "" {
+		settings.SetGitHubAppInstallationID(sj.GitHubAppInstallationID)
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
 
 	if sj.SlackUserID != "" {
 		settings.SetSlackUserID(sj.SlackUserID)
@@ -537,30 +514,11 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
-	if sj.GitSync != nil {
-		gs := &entities.GitSyncConfig{
-			Enabled:      sj.GitSync.Enabled,
-			RepoFullName: sj.GitSync.RepoFullName,
-			Branch:       sj.GitSync.Branch,
-			RootPath:     sj.GitSync.RootPath,
-			AutoPush:     sj.GitSync.AutoPush,
-			GitHubToken:  sj.GitSync.GitHubToken,
-			Encryption: entities.SyncEncryptionConfig{
-				KMSKeyARN:    sj.GitSync.Encryption.KMSKeyARN,
-				AWSRegion:    sj.GitSync.Encryption.AWSRegion,
-				EncryptedDEK: sj.GitSync.Encryption.EncryptedDEK,
-				DEKVersion:   sj.GitSync.Encryption.DEKVersion,
-			},
-		}
-		if sj.GitSync.LastPushedAt != nil {
-			gs.LastPushedAt = *sj.GitSync.LastPushedAt
-		}
-		settings.SetGitSync(gs)
-		settings.SetUpdatedAt(sj.UpdatedAt)
-	}
-
 	if sj.DefaultSessionProfileID != "" {
 		settings.SetDefaultSessionProfileID(sj.DefaultSessionProfileID)
+	}
+	if sj.DefaultAgentType != "" {
+		settings.SetDefaultAgentType(sj.DefaultAgentType)
 	}
 
 	return settings, nil

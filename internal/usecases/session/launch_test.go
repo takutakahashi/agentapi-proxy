@@ -102,6 +102,32 @@ func (r *fakeSessionProfileRepo) Update(context.Context, *entities.SessionProfil
 }
 func (r *fakeSessionProfileRepo) Delete(context.Context, string) error { return nil }
 
+func TestLaunchPropagatesTriggeredUserAndCredentialSource(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	launcher := NewLaunchUseCase(sessionManager)
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "webhook-owner",
+		TriggeredUserID:  "github-actor",
+		Scope:            entities.ScopeTeam,
+		TeamID:           "org/team-a",
+		Teams:            []string{"org/team-a"},
+		CredentialSource: "triggered_user",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.TriggeredUserID; got != "github-actor" {
+		t.Fatalf("TriggeredUserID = %q, want github-actor", got)
+	}
+	if got := sessionManager.req.CredentialSource; got != "triggered_user" {
+		t.Fatalf("CredentialSource = %q, want triggered_user", got)
+	}
+	if got := sessionManager.req.UserID; got != "webhook-owner" {
+		t.Fatalf("UserID = %q, want webhook-owner", got)
+	}
+}
+
 func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
@@ -161,6 +187,32 @@ func TestLaunchPropagatesProfileMCPServers(t *testing.T) {
 	got := sessionManager.req.ProfileMCPServers.GetServer("github")
 	if got == nil || got.URL() != "https://mcp.example.com/github" || got.Headers()["Authorization"] != "Bearer token" {
 		t.Fatalf("unexpected MCP server: %#v", got)
+	}
+}
+
+func TestLaunchKeepsProfileEnvironmentSeparateFromExplicitEnvironment(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "environment", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetEnvironment(map[string]string{"SHARED": "profile", "PROFILE_ONLY": "profile-value"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser,
+		Environment: map[string]string{"SHARED": "request"},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.ProfileEnvironment["SHARED"]; got != "profile" {
+		t.Fatalf("profile environment SHARED = %q, want profile", got)
+	}
+	if got := sessionManager.req.Environment["SHARED"]; got != "request" {
+		t.Fatalf("explicit environment SHARED = %q, want request", got)
 	}
 }
 

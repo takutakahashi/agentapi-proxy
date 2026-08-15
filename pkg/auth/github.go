@@ -82,6 +82,24 @@ func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 	}
 }
 
+// UpdateConfig refreshes authentication and authorization rules without
+// recreating the provider or losing its team-mapping repository.
+func (p *GitHubAuthProvider) UpdateConfig(cfg *config.GitHubAuthConfig) {
+	if cfg == nil {
+		return
+	}
+	if p.config == nil {
+		p.config = cfg
+		return
+	}
+	existingOAuth := p.config.OAuth
+	*p.config = *cfg
+	if existingOAuth != nil && cfg.OAuth != nil {
+		*existingOAuth = *cfg.OAuth
+		p.config.OAuth = existingOAuth
+	}
+}
+
 // SetTeamMappingRepo injects a persistent ConfigMap-backed team mapping repository.
 // When set, team memberships will be read from and written to the ConfigMap as a
 // secondary cache layer (behind the 30-second in-memory teamCache).
@@ -148,6 +166,14 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	}
 
 	user.Teams = teams
+
+	// GitHub authentication is fail-closed by default: a valid GitHub token alone
+	// is not enough. Unless explicitly allowed, the user must belong to at least
+	// one team configured in team_role_mapping. getUserTeamsOptimized only returns
+	// memberships that match those configured rules, including wildcard rules.
+	if len(teams) == 0 && !p.config.UserMapping.AllowUsersWithoutTeam {
+		return nil, fmt.Errorf("user %q does not belong to any configured team", user.Login)
+	}
 
 	// Map user permissions based on team memberships
 	role, permissions, envFile := p.mapUserPermissions(teams)

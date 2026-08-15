@@ -52,6 +52,38 @@ func NewKubernetesCredentialsRepository(client kubernetes.Interface, namespace s
 	}
 }
 
+// SaveFiles replaces the managed-file snapshot for a credential owner. The
+// backing client may be a KV adapter; callers do not need Kubernetes access.
+func (r *KubernetesCredentialsRepository) SaveFiles(ctx context.Context, name string, files []sessionsettings.ManagedFile) error {
+	if name == "" {
+		return fmt.Errorf("credentials name is required")
+	}
+	secretName := r.secretName(name)
+	now := time.Now().UTC().Format(time.RFC3339)
+	createdAt := now
+	existing, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil && existing.Annotations != nil && existing.Annotations[AnnotationCredentialsCreatedAt] != "" {
+		createdAt = existing.Annotations[AnnotationCredentialsCreatedAt]
+	} else if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to read credentials snapshot: %w", err)
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: secretName, Namespace: r.namespace,
+		Labels:      map[string]string{LabelCredentials: "true", LabelCredentialsName: sanitizeLabelValue(name)},
+		Annotations: map[string]string{AnnotationCredentialsName: name, AnnotationCredentialsCreatedAt: createdAt, AnnotationCredentialsUpdatedAt: now},
+	}, Type: corev1.SecretTypeOpaque, Data: sessionsettings.FilesToSecretData(files)}
+	if errors.IsNotFound(err) {
+		_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	} else {
+		secret.ResourceVersion = existing.ResourceVersion
+		_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("save managed-file snapshot: %w", err)
+	}
+	return nil
+}
+
 // Save persists credentials for a single file type in the agentapi-agent-files-{name} Secret.
 // It reads the current Secret first to preserve any existing entries for other file types.
 func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entities.Credentials) error {

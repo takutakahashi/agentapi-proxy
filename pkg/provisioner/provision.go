@@ -6,24 +6,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
-	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
 )
 
 const (
@@ -35,6 +34,8 @@ const (
 	// absent; the provisioner writes the file itself from SessionSettings so
 	// that both paths behave identically.
 )
+
+var errSessionStateBackendUnavailable = errors.New("session persistence backend is unavailable")
 
 var runtimeHome = provisionerHome()
 var sessionEnvFile = filepath.Join(runtimeHome, ".session", "env")
@@ -146,6 +147,8 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
 	normalizeNativeSettings(settings)
+	injectUsageReportingHook(settings)
+	injectSessionPersistenceHook(settings)
 	startedAt := time.Now()
 	s.setPhase("provision:start")
 	log.Printf("[PROVISIONER] Starting provisioning for session %s", settings.Session.ID)
@@ -203,6 +206,32 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
+	restoreSource := settings.Session.ResumeFrom
+	restoreRequired := restoreSource != ""
+	if restoreSource == "" && settings.Session.PersistenceEnabled {
+		// Pod replacement keeps the proxy session ID. Use that stable ID as the
+		// implicit snapshot key so restart recovery needs no API parameter.
+		restoreSource = settings.Session.ID
+	}
+	if restoreSource != "" {
+		s.setPhase("provision:restore-session-state")
+		restoreCWD := filepath.Dir(workdirRepoPath)
+		if settings.Repository != nil && strings.TrimSpace(settings.Repository.FullName) != "" {
+			restoreCWD = workdirRepoPath
+		}
+		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
+		if errors.Is(err, errSessionStateBackendUnavailable) {
+			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
+		} else if err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
+			return
+		} else if !found && restoreRequired {
+			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: snapshot %s was not found", restoreSource))
+			return
+		} else if found {
+			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
+		}
+	}
 
 	// ── Step 2.3: docker login for DinD registries ───────────────────────────
 	s.setPhase("provision:post-setup")
@@ -371,7 +400,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 12: start files sync goroutine ───────────────────────────────────
-	// Syncs managedFilePaths → Kubernetes Secret agentapi-agent-files-{userID}.
+	// Syncs managedFilePaths through the authenticated session control API.
 	// Runs in-process instead of as a sidecar so that UserID is always set
 	// (stock pool pods have empty UserID at pod creation time).
 	go s.runFilesSync(ctx, settings.Session.UserID, settings.UnsyncedFilePaths)
@@ -384,6 +413,159 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
+	if settings == nil || !settings.Session.PersistenceEnabled || (settings.Session.AgentType != "claude-acp" && settings.Session.AgentType != "codex-acp") {
+		return
+	}
+	// Return from the Stop hook before checkpointing: Codex commits its local
+	// thread state only after synchronous Stop hooks finish.
+	binary := proxybinary.ShellReference()
+	command := fmt.Sprintf("nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 %s client backup-session-state && %s client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &", binary, binary)
+	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 10}}}
+	appendStop := func(root map[string]interface{}) map[string]interface{} {
+		if root == nil {
+			root = map[string]interface{}{}
+		}
+		hooks, _ := root["hooks"].(map[string]interface{})
+		if hooks == nil {
+			hooks = map[string]interface{}{}
+		}
+		stops := asInterfaceSlice(hooks["Stop"])
+		hooks["Stop"] = append(stops, hook)
+		root["hooks"] = hooks
+		return root
+	}
+	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
+	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+}
+
+func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {
+	if settings == nil || !settings.UsageReportingEnabled {
+		return
+	}
+	agentType := settings.Session.AgentType
+	command := fmt.Sprintf("%s client report-usage --agent-type %s >> /tmp/usage-report.log 2>&1", proxybinary.ShellReference(), shellQuote(agentType))
+	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 15}}}
+	appendStop := func(root map[string]interface{}) map[string]interface{} {
+		if root == nil {
+			root = map[string]interface{}{}
+		}
+		hooks, _ := root["hooks"].(map[string]interface{})
+		if hooks == nil {
+			hooks = map[string]interface{}{}
+		}
+		// Usage must run before destructive oneshot hooks remove the session.
+		hooks["Stop"] = append([]interface{}{hook}, asInterfaceSlice(hooks["Stop"])...)
+		root["hooks"] = hooks
+		return root
+	}
+	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
+	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	token := os.Getenv("PROVISIONER_TOKEN")
+	if proxy == "" || token == "" {
+		return false, fmt.Errorf("provisioner proxy credentials are missing")
+	}
+	restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	directReq, directErr := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID+"/download-url", nil)
+	if directErr == nil {
+		directReq.Header.Set("Authorization", "Bearer "+token)
+		directResp, err := s.httpClient.Do(directReq)
+		if err != nil {
+			return false, errSessionStateBackendUnavailable
+		}
+		if directResp.StatusCode == http.StatusOK {
+			var signed struct {
+				URL string `json:"url"`
+			}
+			decodeErr := json.NewDecoder(io.LimitReader(directResp.Body, 64<<10)).Decode(&signed)
+			_ = directResp.Body.Close()
+			if decodeErr != nil || signed.URL == "" {
+				return false, fmt.Errorf("invalid direct restore response")
+			}
+			objectReq, reqErr := http.NewRequestWithContext(restoreCtx, http.MethodGet, signed.URL, nil)
+			if reqErr != nil {
+				return false, reqErr
+			}
+			objectResp, reqErr := sessionStateObjectClient(signed.URL).Do(objectReq)
+			if reqErr != nil {
+				return false, errSessionStateBackendUnavailable
+			}
+			defer func() { _ = objectResp.Body.Close() }()
+			if objectResp.StatusCode == http.StatusNotFound {
+				return false, nil
+			}
+			if objectResp.StatusCode != http.StatusOK {
+				return false, errSessionStateBackendUnavailable
+			}
+			if err := sessionstate.Unpack(objectResp.Body, runtimeHome, cwd); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		_ = directResp.Body.Close()
+		if directResp.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		if directResp.StatusCode == http.StatusServiceUnavailable {
+			return false, errSessionStateBackendUnavailable
+		}
+		if directResp.StatusCode != http.StatusNotImplemented {
+			return false, fmt.Errorf("direct restore endpoint returned HTTP %d", directResp.StatusCode)
+		}
+	}
+	req, err := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return false, errSessionStateBackendUnavailable
+	}
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return false, fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if err := sessionstate.Unpack(resp.Body, runtimeHome, cwd); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sessionStateObjectClient(rawURL string) *http.Client {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return http.DefaultClient
+	}
+	hostname := parsed.Hostname()
+	if strings.Contains(hostname, ".") && !strings.HasSuffix(hostname, ".svc") && !strings.HasSuffix(hostname, ".cluster.local") {
+		return http.DefaultClient
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultClient
+	}
+	direct := transport.Clone()
+	direct.Proxy = nil
+	return &http.Client{Transport: direct}
 }
 
 func trustNativeWorkspace(configPath, workspace string) error {
@@ -773,9 +955,8 @@ func writeCredentials(credentialsJSON string) error {
 	return nil
 }
 
-// runFilesSync watches the paths listed in managedFilePaths for changes and syncs
-// all of them to the Kubernetes Secret agentapi-agent-files-{userID} using the
-// in-cluster k8s client.
+// runFilesSync watches managed files and sends snapshots through the
+// session-scoped control API. Session Pods never receive Kubernetes write access.
 // The goroutine is tied to ctx: when ctx is cancelled the loop exits.
 func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePaths []string) {
 	const syncInterval = 10 * time.Second
@@ -785,15 +966,13 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 		return
 	}
 
-	secretName := "agentapi-agent-files-" + sanitizeCredentialSecretName(userID)
-
-	// Read namespace from the in-cluster service-account namespace file.
-	nsBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		log.Printf("[FILES_SYNC] Not running in a k8s cluster (namespace file not found): %v, skipping", err)
+	proxyURL := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	token := os.Getenv("SESSION_CONTROL_TOKEN")
+	if proxyURL == "" || sessionID == "" || token == "" {
+		log.Printf("[FILES_SYNC] Session control URL, session ID, or token missing; skipping")
 		return
 	}
-	namespace := strings.TrimSpace(string(nsBytes))
 
 	watchedPaths := syncedManagedFilePaths(unsyncedFilePaths)
 	if len(watchedPaths) == 0 {
@@ -801,18 +980,8 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 		return
 	}
 
-	log.Printf("[FILES_SYNC] Starting: watching %v -> Secret %s/%s (interval: %s)", watchedPaths, namespace, secretName, syncInterval)
-
-	k8sCfg, err := rest.InClusterConfig()
-	if err != nil {
-		log.Printf("[FILES_SYNC] Failed to get in-cluster config: %v, skipping", err)
-		return
-	}
-	clientset, err := kubernetes.NewForConfig(k8sCfg)
-	if err != nil {
-		log.Printf("[FILES_SYNC] Failed to create k8s client: %v, skipping", err)
-		return
-	}
+	log.Printf("[FILES_SYNC] Starting: watching %v -> session control API (interval: %s)", watchedPaths, syncInterval)
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	// Track last hash per file path to detect changes.
 	lastHashes := make(map[string]string, len(watchedPaths))
@@ -869,13 +1038,12 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 				})
 			}
 
-			secretData := sessionsettings.FilesToSecretData(files)
-			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) to Secret %s", len(files), secretName)
-			if err := upsertFilesSecret(ctx, clientset, namespace, secretName, secretData); err != nil {
-				log.Printf("[FILES_SYNC] ERROR: failed to upsert Secret: %v", err)
+			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) through control API", len(files))
+			if err := saveManagedFiles(ctx, client, proxyURL, sessionID, token, files); err != nil {
+				log.Printf("[FILES_SYNC] ERROR: control API sync failed: %v", err)
 				// Do not update lastHashes so the next tick retries the sync.
 			} else {
-				log.Printf("[FILES_SYNC] Successfully synced to Secret %s", secretName)
+				log.Printf("[FILES_SYNC] Successfully synced through control API")
 				// Update hashes only after a successful sync so failed upserts are retried.
 				for _, path := range watchedPaths {
 					if snap, ok := snapshots[path]; ok {
@@ -917,44 +1085,28 @@ func readFileWithHash(path string) ([]byte, string, error) {
 	return data, fmt.Sprintf("%x", sum), nil
 }
 
-// upsertFilesSecret creates or updates the agentapi-agent-files-{userID} Kubernetes
-// Secret with the provided index-based file data produced by FilesToSecretData.
-func upsertFilesSecret(ctx context.Context, clientset kubernetes.Interface, namespace, name string, data map[string][]byte) error {
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agentapi-agent-files",
-				"app.kubernetes.io/managed-by": "agentapi-proxy",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
-	}
-
-	_, err := clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err == nil {
-		return nil
-	}
-	if k8serrors.IsAlreadyExists(err) {
-		_, err = clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
+func saveManagedFiles(ctx context.Context, client *http.Client, proxyURL, sessionID, token string, files []sessionsettings.ManagedFile) error {
+	body, err := json.Marshal(map[string]any{"files": files})
+	if err != nil {
 		return err
 	}
-	return err
-}
-
-// sanitizeCredentialSecretName converts a userID into a valid Kubernetes Secret
-// name component (lowercase alphanumeric and dashes only, max 50 chars).
-func sanitizeCredentialSecretName(s string) string {
-	s = strings.ToLower(s)
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	s = re.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) > 50 {
-		s = s[:50]
+	endpoint := proxyURL + "/internal/session-control/" + url.PathEscape(sessionID) + "/managed-files"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
 	}
-	return s
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("control API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	return nil
 }
 
 // runOtelcol starts the OpenTelemetry Collector binary as a subprocess.
@@ -1062,6 +1214,7 @@ service:
 // process, mirroring the logic in BuildRemoteProvisionSettings().
 func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, envMap map[string]string) (string, []string) {
 	agentType := settings.Session.AgentType
+	agentapiProxyBinary := proxybinary.FromMap(envMap)
 
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
 	if agentapiPort == "" {
@@ -1075,7 +1228,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// --output-file writes conversation history in acp-posts JSONL format for Slack integration.
 		// claude-agent-acp is the official ACP adapter for the Claude Agent SDK:
 		// https://github.com/agentclientprotocol/claude-agent-acp
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--output-file", acpHistoryPath,
@@ -1087,7 +1240,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
 		// https://github.com/agentclientprotocol/codex-acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
@@ -1101,7 +1254,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// talk directly to Ollama Cloud without a local Ollama daemon.
 		// https://github.com/svkozak/pi-acp
 		ensurePiOllamaEnv(envMap)
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
@@ -1113,7 +1266,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps Cursor Agent CLI's native ACP server via stdio.
 		// https://cursor.com/docs/cli/acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
@@ -1808,7 +1961,8 @@ func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
 	}
 
 	log.Printf("[PROVISIONER] Fetching session memory (keys: %s)", memoryKeyFlags)
-	out, err := exec.Command("agentapi-proxy", args...).Output()
+	agentapiProxyBinary := proxybinary.FromMap(envMap)
+	out, err := exec.Command(agentapiProxyBinary, args...).Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		log.Printf("[PROVISIONER] No memory found for this session (non-fatal)")
 		return

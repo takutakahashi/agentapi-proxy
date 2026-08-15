@@ -14,14 +14,20 @@ import (
 )
 
 type AllocatorWorker struct {
-	sessionManager repositories.SessionManager
-	client         sessionallocation.ExternalAllocatorClient
-	upstreamURL    string
-	publicURL      string
+	sessionManager         repositories.SessionManager
+	client                 sessionallocation.ExternalAllocatorClient
+	upstreamURL            string
+	publicURL              string
+	applyRuntimeProfile    bool
+	appliedProfileRevision string
 }
 
 type directSessionManager interface {
 	CreateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error)
+}
+
+type runtimeProfileApplier interface {
+	ApplyRuntimeProfile(ctx context.Context, profile *sessionsettings.RuntimeProfile) error
 }
 
 func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token, publicURL string) *AllocatorWorker {
@@ -29,7 +35,13 @@ func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL,
 }
 
 func NewAllocatorWorkerWithUpstreamAuth(sessionManager repositories.SessionManager, upstreamURL, token, upstreamAuthToken, publicURL string) *AllocatorWorker {
-	return newAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewNativeAllocatorClient(upstreamURL, token, upstreamAuthToken), upstreamURL, publicURL)
+	return NewAllocatorWorkerWithUpstreamAuthAndRuntimeProfile(sessionManager, upstreamURL, token, upstreamAuthToken, publicURL, false)
+}
+
+func NewAllocatorWorkerWithUpstreamAuthAndRuntimeProfile(sessionManager repositories.SessionManager, upstreamURL, token, upstreamAuthToken, publicURL string, applyRuntimeProfile bool) *AllocatorWorker {
+	worker := newAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewNativeAllocatorClient(upstreamURL, token, upstreamAuthToken), upstreamURL, publicURL)
+	worker.applyRuntimeProfile = applyRuntimeProfile
+	return worker
 }
 
 func NewAllocatorWorkerWithClient(sessionManager repositories.SessionManager, client sessionallocation.ExternalAllocatorClient, publicURL string) *AllocatorWorker {
@@ -38,14 +50,16 @@ func NewAllocatorWorkerWithClient(sessionManager repositories.SessionManager, cl
 
 func newAllocatorWorkerWithClient(sessionManager repositories.SessionManager, client sessionallocation.ExternalAllocatorClient, upstreamURL, publicURL string) *AllocatorWorker {
 	return &AllocatorWorker{
-		sessionManager: sessionManager,
-		client:         client,
-		upstreamURL:    upstreamURL,
-		publicURL:      publicURL,
+		sessionManager:      sessionManager,
+		client:              client,
+		upstreamURL:         upstreamURL,
+		publicURL:           publicURL,
+		applyRuntimeProfile: true,
 	}
 }
 
 func (w *AllocatorWorker) Start(ctx context.Context) {
+	hadPollError := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -56,9 +70,12 @@ func (w *AllocatorWorker) Start(ctx context.Context) {
 		allocation, ok, err := w.client.NextExternal(ctx, 30*time.Second)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to poll allocation: %v", err)
+			hadPollError = true
 			sleepOrDone(ctx, 5*time.Second)
 			continue
 		}
+		w.syncRuntimeProfile(ctx, hadPollError)
+		hadPollError = false
 		if !ok {
 			continue
 		}
@@ -66,7 +83,50 @@ func (w *AllocatorWorker) Start(ctx context.Context) {
 	}
 }
 
+func (w *AllocatorWorker) syncRuntimeProfile(ctx context.Context, force bool) {
+	if !w.applyRuntimeProfile {
+		return
+	}
+	applier, ok := w.sessionManager.(runtimeProfileApplier)
+	if !ok {
+		return
+	}
+	source, ok := w.client.(sessionallocation.RuntimeProfileClient)
+	if !ok {
+		return
+	}
+	revision := source.RuntimeProfileRevision()
+	if revision == "" || (!force && revision == w.appliedProfileRevision) {
+		return
+	}
+	snapshot, err := source.GetRuntimeProfile(ctx)
+	if err != nil {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to synchronize parent runtime profile: %v", err)
+		return
+	}
+	if snapshot == nil || snapshot.Profile == nil || snapshot.Revision == "" {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Parent returned an empty runtime profile snapshot")
+		return
+	}
+	if err := applier.ApplyRuntimeProfile(ctx, snapshot.Profile); err != nil {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to apply synchronized parent runtime profile: %v", err)
+		return
+	}
+	w.appliedProfileRevision = snapshot.Revision
+	log.Printf("[SESSION_MANAGER_ALLOCATOR] Synchronized parent runtime profile revision %s", snapshot.Revision)
+}
+
 func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionallocation.AllocationRequest) {
+	if applier, ok := w.sessionManager.(runtimeProfileApplier); ok && w.applyRuntimeProfile && allocation.RuntimeProfile != nil {
+		if err := applier.ApplyRuntimeProfile(ctx, allocation.RuntimeProfile); err != nil {
+			log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to apply parent runtime profile: %v", err)
+			_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
+				Status:  sessionallocation.StatusError,
+				Message: "failed to apply parent runtime profile: " + err.Error(),
+			})
+			return
+		}
+	}
 	remoteProvisioner := false
 	if manager, ok := w.sessionManager.(interface{ UsesRemoteProvisioner() bool }); ok {
 		remoteProvisioner = manager.UsesRemoteProvisioner()
@@ -81,6 +141,22 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionalloca
 			Message: "provision_settings is required",
 		})
 		return
+	}
+	if allocation.Runtime != nil {
+		parentRuntime := &sessionsettings.ParentRuntimeConfig{
+			Enabled:    true,
+			Endpoint:   w.upstreamURL,
+			SessionID:  allocation.SessionID,
+			ManagerID:  allocation.ManagerID,
+			Token:      allocation.Runtime.Token,
+			Generation: allocation.Runtime.Generation,
+		}
+		if settings != nil {
+			settings.ParentRuntime = parentRuntime
+		}
+		if allocation.Request != nil {
+			allocation.Request.ParentRuntime = parentRuntime
+		}
 	}
 
 	// The public session ID belongs to the upstream proxy. Keep the oneshot Stop

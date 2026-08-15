@@ -37,6 +37,7 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 	native := session.(*NativeSession)
 	wantHome := filepath.Join(stateDir, "sessions", "native-1", "home")
 	foundHome := false
+	foundProxyBinary := false
 	for _, value := range native.cmd.Env {
 		if value == "HOME="+wantHome {
 			foundHome = true
@@ -44,9 +45,35 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
 			t.Fatalf("native path override was retained: %q", value)
 		}
+		if value == "CCPLANT_BINARY_PATH=/bin/true" {
+			foundProxyBinary = true
+		}
 	}
 	if !foundHome {
 		t.Fatalf("virtual HOME %q was not configured", wantHome)
+	}
+	if !foundProxyBinary {
+		t.Fatal("managed agentapi-proxy binary was not passed to provisioner")
+	}
+}
+
+func TestNativeProvisionerEnvironmentOverridesInheritedProxyBinary(t *testing.T) {
+	env := nativeProvisionerEnvironment(
+		[]string{"PATH=/usr/bin", "CCPLANT_BINARY_PATH=/usr/local/bin/agentapi-proxy"},
+		"CCPLANT_BINARY_PATH=/app/Contents/MacOS/agentapi-proxy",
+	)
+	want := "CCPLANT_BINARY_PATH=/app/Contents/MacOS/agentapi-proxy"
+	count := 0
+	for _, value := range env {
+		if strings.HasPrefix(value, "CCPLANT_BINARY_PATH=") {
+			count++
+			if value != want {
+				t.Fatalf("proxy binary = %q, want %q", value, want)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("proxy binary entry count = %d, want 1", count)
 	}
 }
 
@@ -70,6 +97,13 @@ func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Process.Kill() })
+	deadline := time.Now().Add(2 * time.Second)
+	for !nativeProcessMatchesSession(process.Process.Pid, root) {
+		if time.Now().After(deadline) {
+			t.Fatal("native process environment was not visible before timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	state := nativeSessionState{ID: "native-1", Request: &entities.RunServerRequest{UserID: "user-1", Tags: map[string]string{"allocator.os": "linux"}}, RootDir: root, AgentPort: port, ProvisionerPort: 42001, PID: process.Process.Pid, StartedAt: now, UpdatedAt: now, LastMessageAt: now, Status: "running", FilesystemSandbox: false}
 	data, _ := json.Marshal(state)
@@ -83,6 +117,16 @@ func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 	s := m.GetSession("native-1")
 	if s == nil || s.UserID() != "user-1" || s.Addr() != "127.0.0.1:"+strconv.Itoa(port) || s.Status() != "running" {
 		t.Fatalf("unexpected restored session: %#v", s)
+	}
+}
+
+func TestNativeSessionManagerGetMissingSessionReturnsNil(t *testing.T) {
+	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session := m.GetSession("missing"); session != nil {
+		t.Fatalf("missing session returned a non-nil interface: %#v", session)
 	}
 }
 

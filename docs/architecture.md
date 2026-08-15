@@ -277,7 +277,7 @@ classDiagram
     Settings "1" -- "0..*" Marketplace : references
     Webhook "1" -- "1" Repository : monitors
 
-    note for User "UserType: api_key, github, aws, regular, admin\nRoles: Admin, User, Member, Developer, ReadOnly\nPermissions: session:create, session:read, etc."
+    note for User "UserType: api_key, github, service_account, regular, admin\nRoles: Admin, User, Member, Developer, ReadOnly\nPermissions: session:create, session:read, etc."
     note for Session "SessionStatus: pending, running, stopped, failed\nScope: user, team"
 ```
 

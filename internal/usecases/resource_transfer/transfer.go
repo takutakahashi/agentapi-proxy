@@ -13,8 +13,6 @@ type ResourceType string
 
 const (
 	ResourceMemory         ResourceType = "memory"
-	ResourceTask           ResourceType = "task"
-	ResourceTaskGroup      ResourceType = "task_group"
 	ResourceWebhook        ResourceType = "webhook"
 	ResourceSlackBot       ResourceType = "slackbot"
 	ResourceSessionProfile ResourceType = "session_profile"
@@ -49,8 +47,6 @@ type Result struct {
 
 type UseCase struct {
 	memoryRepo         portrepos.MemoryRepository
-	taskRepo           portrepos.TaskRepository
-	taskGroupRepo      portrepos.TaskGroupRepository
 	webhookRepo        portrepos.WebhookRepository
 	slackBotRepo       portrepos.SlackBotRepository
 	sessionProfileRepo portrepos.SessionProfileRepository
@@ -69,14 +65,6 @@ func New(opts ...Option) *UseCase {
 
 func WithMemoryRepository(repo portrepos.MemoryRepository) Option {
 	return func(uc *UseCase) { uc.memoryRepo = repo }
-}
-
-func WithTaskRepository(repo portrepos.TaskRepository) Option {
-	return func(uc *UseCase) { uc.taskRepo = repo }
-}
-
-func WithTaskGroupRepository(repo portrepos.TaskGroupRepository) Option {
-	return func(uc *UseCase) { uc.taskGroupRepo = repo }
 }
 
 func WithWebhookRepository(repo portrepos.WebhookRepository) Option {
@@ -119,10 +107,6 @@ func (uc *UseCase) Transfer(ctx context.Context, req Request) (Result, error) {
 	switch req.ResourceType {
 	case ResourceMemory:
 		return uc.transferMemory(ctx, req, targetUserID)
-	case ResourceTask:
-		return uc.transferTask(ctx, req, targetUserID)
-	case ResourceTaskGroup:
-		return uc.transferTaskGroup(ctx, req, targetUserID)
 	case ResourceWebhook:
 		return uc.transferWebhook(ctx, req, targetUserID)
 	case ResourceSlackBot:
@@ -232,56 +216,6 @@ func sameOwnership(actualScope entities.ResourceScope, actualOwnerID, actualTeam
 		return actualTeamID == targetTeamID
 	}
 	return actualOwnerID == targetOwnerID
-}
-
-func (uc *UseCase) transferTask(ctx context.Context, req Request, targetUserID string) (Result, error) {
-	if uc.taskRepo == nil {
-		return Result{}, fmt.Errorf("task repository is not configured")
-	}
-	t, err := uc.taskRepo.GetByID(ctx, req.ResourceID)
-	if err != nil {
-		return Result{}, err
-	}
-	if !canModify(req.Actor, t.OwnerID(), t.Scope(), t.TeamID()) {
-		return Result{}, fmt.Errorf("access denied")
-	}
-	res := result(req, endpoint(t.Scope(), t.OwnerID(), t.TeamID()), targetUserID)
-	if t.GroupID() != "" {
-		res.Warnings = append(res.Warnings, "task group ownership is not changed automatically")
-	}
-	if req.DryRun {
-		return res, nil
-	}
-	t.SetOwnership(req.TargetScope, targetUserID, req.TargetTeamID)
-	if err := uc.taskRepo.Update(ctx, t); err != nil {
-		return Result{}, err
-	}
-	log.Printf("[RESOURCE_TRANSFER] actor=%s type=%s id=%s from=%+v to=%+v", req.Actor.ID(), req.ResourceType, req.ResourceID, res.From, res.To)
-	return res, nil
-}
-
-func (uc *UseCase) transferTaskGroup(ctx context.Context, req Request, targetUserID string) (Result, error) {
-	if uc.taskGroupRepo == nil {
-		return Result{}, fmt.Errorf("task group repository is not configured")
-	}
-	g, err := uc.taskGroupRepo.GetByID(ctx, req.ResourceID)
-	if err != nil {
-		return Result{}, err
-	}
-	if !canModify(req.Actor, g.OwnerID(), g.Scope(), g.TeamID()) {
-		return Result{}, fmt.Errorf("access denied")
-	}
-	res := result(req, endpoint(g.Scope(), g.OwnerID(), g.TeamID()), targetUserID)
-	res.Warnings = append(res.Warnings, "tasks in this group are not transferred automatically")
-	if req.DryRun {
-		return res, nil
-	}
-	g.SetOwnership(req.TargetScope, targetUserID, req.TargetTeamID)
-	if err := uc.taskGroupRepo.Update(ctx, g); err != nil {
-		return Result{}, err
-	}
-	log.Printf("[RESOURCE_TRANSFER] actor=%s type=%s id=%s from=%+v to=%+v", req.Actor.ID(), req.ResourceType, req.ResourceID, res.From, res.To)
-	return res, nil
 }
 
 func (uc *UseCase) transferWebhook(ctx context.Context, req Request, targetUserID string) (Result, error) {

@@ -217,19 +217,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	log.Printf("[WEBHOOK] Trigger matched: %s (%s)", matchResult.ID(), matchResult.Name())
 
 	// Build GitHub-specific metadata tags
-	tags := map[string]string{
-		"webhook_id":   matchedWebhook.ID(),
-		"webhook_name": matchedWebhook.Name(),
-		"trigger_id":   matchResult.ID(),
-		"trigger_name": matchResult.Name(),
-		"github_event": event,
-	}
-	if payload.Repository != nil {
-		tags["repository"] = payload.Repository.FullName
-	}
-	if payload.Action != "" {
-		tags["github_action"] = payload.Action
-	}
+	tags := buildGitHubTags(matchedWebhook, matchResult, event, &payload)
 
 	// Create or reuse session via shared service
 	sessionID, sessionReused, err := c.sessionService.CreateSessionFromWebhook(ctx.Request().Context(), SessionCreationParams{
@@ -625,6 +613,15 @@ func (c *WebhookGitHubController) BuildGitHubTagsForTest(
 	event string,
 	payload *GitHubPayload,
 ) map[string]string {
+	return buildGitHubTags(webhook, trigger, event, payload)
+}
+
+func buildGitHubTags(
+	webhook *entities.Webhook,
+	trigger *entities.WebhookTrigger,
+	event string,
+	payload *GitHubPayload,
+) map[string]string {
 	tags := map[string]string{
 		"webhook_id":   webhook.ID(),
 		"webhook_name": webhook.Name(),
@@ -637,6 +634,10 @@ func (c *WebhookGitHubController) BuildGitHubTagsForTest(
 	}
 	if payload.Action != "" {
 		tags["github_action"] = payload.Action
+	}
+	if payload.Sender != nil && strings.TrimSpace(payload.Sender.Login) != "" {
+		tags["github_sender"] = strings.TrimSpace(payload.Sender.Login)
+		tags["credential_source"] = "github_sender"
 	}
 	return tags
 }

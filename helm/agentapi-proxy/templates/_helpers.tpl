@@ -5,6 +5,61 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* Role-specific image helpers. Empty role values preserve the legacy root image. */}}
+{{- define "agentapi-proxy.apiImage" -}}
+{{- $api := .Values.api | default dict -}}
+{{- $image := $api.image | default dict -}}
+{{- $repository := $image.repository | default .Values.image.repository -}}
+{{- $tag := $image.tag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end }}
+
+{{- define "agentapi-proxy.workerImage" -}}
+{{- $worker := .Values.worker | default dict -}}
+{{- $image := $worker.image | default dict -}}
+{{- $repository := $image.repository | default .Values.image.repository -}}
+{{- $tag := $image.tag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end }}
+
+{{- define "agentapi-proxy.sessionManagerImage" -}}
+{{- $manager := .Values.sessionManager | default dict -}}
+{{- $image := $manager.image | default dict -}}
+{{- $repository := $image.repository | default .Values.image.repository -}}
+{{- $tag := $image.tag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end }}
+
+{{- define "agentapi-proxy.apiServiceAccountName" -}}
+{{- $api := .Values.api | default dict -}}
+{{- $sa := $api.serviceAccount | default .Values.serviceAccount -}}
+{{- if $sa.create -}}
+{{- default (include "agentapi-proxy.fullname" .) $sa.name -}}
+{{- else -}}
+{{- default "default" $sa.name -}}
+{{- end -}}
+{{- end }}
+
+{{- define "agentapi-proxy.workerServiceAccountName" -}}
+{{- $worker := .Values.worker | default dict -}}
+{{- $sa := $worker.serviceAccount | default dict -}}
+{{- if $sa.create -}}
+{{- default (printf "%s-worker" (include "agentapi-proxy.fullname" .)) $sa.name -}}
+{{- else -}}
+{{- default "default" $sa.name -}}
+{{- end -}}
+{{- end }}
+
+{{- define "agentapi-proxy.sessionManagerServiceAccountName" -}}
+{{- $manager := .Values.sessionManager | default dict -}}
+{{- $sa := $manager.serviceAccount | default dict -}}
+{{- if $sa.create -}}
+{{- default (printf "%s-session-manager" (include "agentapi-proxy.fullname" .)) $sa.name -}}
+{{- else -}}
+{{- default "default" $sa.name -}}
+{{- end -}}
+{{- end }}
+
 {{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).

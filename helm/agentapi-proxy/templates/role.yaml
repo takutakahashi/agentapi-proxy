@@ -1,14 +1,14 @@
-{{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
-{{- $slackbotCleanupWorkerEnabled := ((.Values.slackbotCleanupWorker).enabled) | default false }}
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled }}
+{{- $manager := .Values.sessionManager | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- if and ($manager.enabled | default false) ($k8s.enabled | default false) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "agentapi-proxy.fullname" . }}-session-manager
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
 rules:
-  {{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
   - apiGroups: [""]
     resources: ["pods"]
     # update: required for adoptStockSession when stock sessions run as Pods.
@@ -22,23 +22,22 @@ rules:
     # update: required for UpdateServiceAnnotation (e.g. agentapi.proxy/updated-at annotation)
     verbs: ["get", "list", "create", "delete", "patch", "update"]
   - apiGroups: [""]
+    resources: ["endpoints"]
+    # Lazy chat recovery checks whether the session Service has a ready Pod.
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "create", "delete"]
+    # update/patch: required when a stock session is adopted and its PVC
+    # owner reference is transferred to the allocated workload.
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     # update/patch: required for adoptStockSession (removing agentapi.proxy/stock label)
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  {{- end }}
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "delete", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
-  {{- if or $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled }}
-  # Leader election for schedule worker and/or slackbot cleanup worker
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  {{- end }}
 {{- end }}

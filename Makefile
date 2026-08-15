@@ -1,11 +1,13 @@
-.PHONY: help install-deps build test lint clean docker-build docker-push e2e ci gofmt setup-envtest envtest devbuild devbuild-image devbuild-helm
+.PHONY: help install-deps build test lint clean docker-build docker-build-api docker-push e2e ci gofmt setup-envtest envtest devbuild devbuild-image devbuild-helm
 
-BINARY_NAME := agentapi-proxy
+BINARY_NAME := ccplant
 GO_FILES := $(shell find . -name "*.go" -type f)
 IMAGE_NAME := agentapi-proxy
 IMAGE_TAG := latest
 REGISTRY ?= ghcr.io/takutakahashi
 FULL_IMAGE_NAME := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+API_IMAGE_NAME ?= ccplant-api
+FULL_API_IMAGE_NAME := $(REGISTRY)/$(API_IMAGE_NAME):$(IMAGE_TAG)
 
 # envtest settings
 ENVTEST_K8S_VERSION ?= 1.29.0
@@ -23,6 +25,7 @@ help:
 	@echo "  gofmt         - Format Go code with gofmt -s -w"
 	@echo "  clean         - Clean build artifacts"
 	@echo "  docker-build  - Build Docker image"
+	@echo "  docker-build-api - Build lightweight API-only Docker image"
 	@echo "  docker-push   - Push Docker image to registry"
 	@echo "  e2e           - Run end-to-end tests"
 	@echo "  ci            - Run CI pipeline (lint, test, build)"
@@ -97,6 +100,10 @@ clean:
 docker-build:
 	@echo "Building Docker image $(FULL_IMAGE_NAME)..."
 	docker build -t $(FULL_IMAGE_NAME) .
+
+docker-build-api:
+	@echo "Building API-only Docker image $(FULL_API_IMAGE_NAME)..."
+	docker build --target api -t $(FULL_API_IMAGE_NAME) .
 
 docker-push: docker-build
 	@echo "Pushing Docker image $(FULL_IMAGE_NAME)..."

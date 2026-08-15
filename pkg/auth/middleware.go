@@ -26,10 +26,28 @@ type UserContext struct {
 	EnvFile     string          // Path to team-specific environment file
 }
 
+// CredentialKind records which authenticator accepted the request. Keeping it
+// separate from the HTTP header prevents an API key from being reused as a
+// GitHub credential by session-creation code.
+type CredentialKind string
+
+const (
+	CredentialKindAPIKey CredentialKind = "api_key"
+	CredentialKindGitHub CredentialKind = "github"
+)
+
+type CredentialContext struct {
+	Kind  CredentialKind
+	Token string
+}
+
+const credentialContextKey = "authenticated_credential"
+
 // AuthMiddleware creates authentication middleware using internal auth service
-func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.MiddlewareFunc {
+func AuthMiddleware(provider config.Provider, authService services.AuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			cfg := provider.Current()
 			// Store config in context for permission checks
 			c.Set("config", cfg)
 
@@ -62,14 +80,21 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				return next(c)
 			}
 
+			// Shared-session read routes authenticate with the unguessable share
+			// token in the path and enforce read-only access in ShareController.
+			if strings.HasPrefix(path, "/s/") {
+				return next(c)
+			}
+
 			// Skip user auth for session Pod provisioner calls. These endpoints
 			// perform their own internal token check in the provisioner controller.
-			if strings.HasPrefix(path, "/internal/session-provisioners") ||
-				strings.HasPrefix(path, "/internal/session-allocations") ||
-				strings.HasPrefix(path, "/internal/external-session-manager") {
+			if isInternalTokenEndpoint(path) {
 				return next(c)
 			}
 			if strings.HasPrefix(path, "/external-session-managers/") && strings.HasSuffix(path, "/heartbeat") {
+				return next(c)
+			}
+			if path == "/external-session-managers/enroll" {
 				return next(c)
 			}
 
@@ -111,6 +136,7 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// This allows personal API keys (loaded via bootstrap) to work
 			if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
 				c.Set("internal_user", user)
+				SetCredentialContext(c, &CredentialContext{Kind: CredentialKindAPIKey})
 				log.Printf("API key authentication successful: user %s (type: %s)", user.ID(), user.UserType())
 				// Build and store authorization context
 				authzCtx := buildAuthorizationContext(user)
@@ -126,6 +152,8 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 				if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
+					token := ExtractTokenFromHeader(c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader))
+					SetCredentialContext(c, &CredentialContext{Kind: CredentialKindGitHub, Token: token})
 					// Build and store authorization context
 					authzCtx := buildAuthorizationContext(user)
 					c.Set("authz_context", authzCtx)
@@ -134,23 +162,22 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
 			}
 
-			// Try AWS authentication via Basic Auth
-			if cfg.Auth.AWS != nil && cfg.Auth.AWS.Enabled {
-				if user, err = tryInternalAWSAuth(c, cfg, authService); err == nil {
-					c.Set("internal_user", user)
-					log.Printf("AWS authentication successful: user %s (type: %s)", user.ID(), user.UserType())
-					// Build and store authorization context
-					authzCtx := buildAuthorizationContext(user)
-					c.Set("authz_context", authzCtx)
-					return next(c)
-				}
-				log.Printf("AWS authentication failed: %v from %s", err, c.RealIP())
-			}
-
 			log.Printf("Authentication failed: no valid credentials provided from %s", c.RealIP())
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}
+}
+
+func isInternalTokenEndpoint(path string) bool {
+	return strings.HasPrefix(path, "/internal/session-provisioners") ||
+		strings.HasPrefix(path, "/internal/session-control") ||
+		strings.HasPrefix(path, "/internal/session-runtime") ||
+		strings.HasPrefix(path, "/internal/session-allocations") ||
+		strings.HasPrefix(path, "/internal/session-state") ||
+		strings.HasPrefix(path, "/internal/session-runners") ||
+		strings.HasPrefix(path, "/internal/session-managers/") ||
+		strings.HasPrefix(path, "/internal/worker/") ||
+		strings.HasPrefix(path, "/internal/external-session-manager")
 }
 
 // RequirePermission creates permission-checking middleware using internal auth service
@@ -198,6 +225,23 @@ func GetAuthorizationContext(c echo.Context) *AuthorizationContext {
 		}
 	}
 	return nil
+}
+
+// GetGitHubTokenFromContext returns a token only when GitHub authentication,
+// rather than API-key authentication, succeeded for this request.
+func GetGitHubTokenFromContext(c echo.Context) (string, bool) {
+	credential, ok := c.Get(credentialContextKey).(*CredentialContext)
+	if !ok || credential == nil || credential.Kind != CredentialKindGitHub || credential.Token == "" {
+		return "", false
+	}
+	return credential.Token, true
+}
+
+// SetCredentialContext records the credential accepted by an authentication
+// adapter. Callers should never set a raw API key because downstream code only
+// needs the GitHub token for user-scoped session enrichment.
+func SetCredentialContext(c echo.Context, credential *CredentialContext) {
+	c.Set(credentialContextKey, credential)
 }
 
 // buildAuthorizationContext builds authorization context from user entity
@@ -440,50 +484,4 @@ func skipAuthForHMACRequest(c echo.Context, hmacSecret string) bool {
 	msg := hmacutil.BuildMessage(c.Request().Method, pathWithQuery, ts, body)
 
 	return hmacutil.Verify([]byte(hmacSecret), msg, sig)
-}
-
-// tryInternalAWSAuth attempts AWS authentication using Basic Auth
-func tryInternalAWSAuth(c echo.Context, cfg *config.Config, authService services.AuthService) (*entities.User, error) {
-	// Extract AWS credentials from Basic Auth
-	creds, ok := ExtractAWSCredentialsFromBasicAuth(c.Request())
-	if !ok {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "AWS credentials required")
-	}
-
-	// Create AWS auth provider
-	awsProvider, err := NewAWSAuthProvider(cfg.Auth.AWS)
-	if err != nil {
-		log.Printf("Failed to create AWS auth provider: %v", err)
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "AWS authentication not available")
-	}
-
-	// Authenticate using AWS credentials
-	userCtx, err := awsProvider.Authenticate(c.Request().Context(), creds)
-	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "AWS authentication failed: "+err.Error())
-	}
-
-	// Convert UserContext to entities.User
-	user := entities.NewAWSUser(
-		entities.UserID(userCtx.UserID),
-		userCtx.UserID,
-		nil, // AWSUserInfo will be set if needed
-	)
-
-	// Set role and permissions
-	if userCtx.Role != "" {
-		_ = user.SetRoles([]entities.Role{entities.Role(userCtx.Role)})
-	}
-
-	permissions := make([]entities.Permission, 0, len(userCtx.Permissions))
-	for _, p := range userCtx.Permissions {
-		permissions = append(permissions, entities.Permission(p))
-	}
-	user.SetPermissions(permissions)
-
-	if userCtx.EnvFile != "" {
-		user.SetEnvFile(userCtx.EnvFile)
-	}
-
-	return user, nil
 }

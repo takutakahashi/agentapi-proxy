@@ -28,28 +28,35 @@ func TestHelpersInit(t *testing.T) {
 	}
 
 	assert.Contains(t, commandNames, "setup-claude-code")
-	assert.Contains(t, commandNames, "init")
 	assert.Contains(t, commandNames, "generate-token")
 	assert.Contains(t, commandNames, "setup-gh")
 	assert.Contains(t, commandNames, "compile-settings")
 }
 
 func TestBuildStartupConfigCursor(t *testing.T) {
-	config := buildStartupConfig("cursor")
+	config := buildStartupConfig("cursor", nil)
 
-	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"ccplant"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
 func TestBuildStartupConfigPiOllama(t *testing.T) {
-	config := buildStartupConfig("pi-ollama")
+	config := buildStartupConfig("pi-ollama", nil)
 
-	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"ccplant"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "pi-acp"}, config.Args)
 	assert.NotEmpty(t, config.PreScript)
 	assert.Contains(t, config.PreScript, "node_modules/pi-ollama-cloud")
 	assert.Contains(t, config.PreScript, "node_modules/pi-mcp-adapter")
 	assert.Contains(t, config.PreScript, "skipping install")
+}
+
+func TestBuildStartupConfigUsesConfiguredProxyBinary(t *testing.T) {
+	config := buildStartupConfig("codex-acp", map[string]string{
+		"CCPLANT_BINARY_PATH": "/opt/ccplant/bin/ccplant",
+	})
+
+	assert.Equal(t, []string{"/opt/ccplant/bin/ccplant"}, config.Command)
 }
 
 func TestGenerateTokenFlags(t *testing.T) {
@@ -277,22 +284,11 @@ func TestSetupClaudeCodeCmdStructure(t *testing.T) {
 	assert.NotNil(t, setupClaudeCodeCmd.Run)
 }
 
-func TestInitCmdStructure(t *testing.T) {
-	assert.Equal(t, "init", initCmd.Use)
-	assert.Equal(t, "Initialize Claude configuration (alias for setup-claude-code)", initCmd.Short)
-	assert.NotNil(t, initCmd.Run)
-
-	// Verify both commands have run functions (cannot directly compare functions)
-	assert.NotNil(t, setupClaudeCodeCmd.Run)
-	assert.NotNil(t, initCmd.Run)
-}
-
 func TestRunSetupClaudeCodeHomeDir(t *testing.T) {
 	// Test that the function can get the home directory
 	// We can't easily test the full function since it creates files,
 	// but we can verify the function exists and has the right structure
 	assert.NotNil(t, setupClaudeCodeCmd.Run)
-	assert.NotNil(t, initCmd.Run)
 }
 
 func TestHelpersRun(t *testing.T) {

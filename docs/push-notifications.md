@@ -508,20 +508,20 @@ agentapi-proxyのhelperサブコマンドとして、登録済みの購読に対
 
 ```bash
 # 特定ユーザーに通知送信
-agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
   --user-id "user_123" \
   --title "新しいメッセージ" \
   --body "Claude からの返答が到着しました" \
   --url "/session/abc123"
 
 # 特定セッションの全ユーザーに通知送信
-agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
   --session-id "abc123" \
   --title "セッション更新" \
   --body "セッションのステータスが変更されました"
 
 # GitHubユーザーのみに通知送信
-agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
   --user-type "github" \
   --title "重要な通知" \
   --body "システムメンテナンスのお知らせ"
@@ -530,7 +530,7 @@ agentapi-proxy helpers send-notification \
 #### コマンドオプション
 
 ```bash
-agentapi-proxy helpers send-notification [OPTIONS]
+ccplant helpers send-notification [OPTIONS]
 
 オプション:
   --user-id string          特定のユーザーIDに送信
@@ -550,26 +550,26 @@ agentapi-proxy helpers send-notification [OPTIONS]
 
 例:
   # 単一ユーザーに送信
-  agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
     --user-id "user_123" \
     --title "新着メッセージ" \
     --body "新しい返答があります" \
     --url "/session/abc123"
   
   # セッション関連の全ユーザーに送信
-  agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
     --session-id "session_456" \
     --title "セッション完了" \
     --body "処理が完了しました"
   
   # GitHub認証ユーザーのみに送信
-  agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
     --user-type "github" \
     --title "機能追加のお知らせ" \
     --body "新機能がリリースされました"
   
   # 送信前の確認（dry-run）
-  agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
     --user-id "user_123" \
     --title "テスト通知" \
     --body "これはテストです" \
@@ -641,7 +641,7 @@ await fetch('/api/subscribe', {
 ### agentapi-proxyからの通知送信
 ```bash
 # コマンドラインからの通知送信
-agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
   --user-id "user_123" \
   --title "新しいメッセージ" \
   --body "Claude からの返答が到着しました" \
@@ -653,7 +653,7 @@ SESSION_ID="abc123"
 USER_ID="user_123"
 MESSAGE="処理が完了しました"
 
-agentapi-proxy helpers send-notification \
+ccplant helpers send-notification \
   --user-id "$USER_ID" \
   --session-id "$SESSION_ID" \
   --title "タスク完了通知" \

@@ -19,6 +19,9 @@ config:
 authConfig:
   github:
     user_mapping:
+      # Keep authentication restricted to configured teams by default.
+      # Set to true to allow other GitHub users with the defaults below.
+      allow_users_without_team: false
       default_role: "user"
       default_permissions:
         - "read"

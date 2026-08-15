@@ -1,0 +1,570 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "api": {
+      "type": "object",
+      "required": ["replicaCount", "image", "serviceAccount", "kvStore", "redis", "encryption", "workerControl", "sessionManager"],
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/image" },
+        "imagePullSecrets": { "type": "array" },
+        "serviceAccount": {
+          "allOf": [
+            { "$ref": "#/definitions/serviceAccount" },
+            { "properties": { "automount": { "const": false } } }
+          ]
+        },
+        "kvStore": { "$ref": "#/definitions/enabledAPIKVStore" },
+        "redis": { "$ref": "#/definitions/redisClient" },
+        "encryption": { "$ref": "#/definitions/encryption" },
+        "workerControl": {
+          "type": "object",
+          "required": ["tokenSecretRef"],
+          "properties": { "tokenSecretRef": { "$ref": "#/definitions/secretRef" } }
+        },
+        "sessionManager": {
+          "type": "object",
+          "required": ["url", "tokenSecretRef"],
+          "properties": {
+            "url": { "type": "string" },
+            "tokenSecretRef": { "$ref": "#/definitions/secretRef" }
+          }
+        }
+      }
+    },
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "observability": {
+      "type": "object",
+      "properties": {
+        "openTelemetry": {
+          "type": "object",
+          "required": ["enabled", "serviceName", "serviceNamespace", "deploymentEnvironment", "tracesSampler", "tracesSamplerArg", "secretRef"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "serviceName": { "type": "string", "minLength": 1 },
+            "serviceNamespace": { "type": "string", "minLength": 1 },
+            "deploymentEnvironment": { "type": "string" },
+            "tracesSampler": { "type": "string", "minLength": 1 },
+            "tracesSamplerArg": { "type": "string", "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$" },
+            "secretRef": {
+              "type": "object",
+              "required": ["name", "endpointKey", "headersKey"],
+              "properties": {
+                "name": { "type": "string" },
+                "endpointKey": { "type": "string", "minLength": 1 },
+                "headersKey": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "controlPlaneService": {
+      "type": "object",
+      "required": ["enabled", "create", "name", "port", "retainOnDelete"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "create": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "retainOnDelete": { "type": "boolean" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+        "selector": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "kubernetesSession": {
+      "type": "object",
+      "required": ["enabled", "pvc", "otelCollector"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceAccountName": { "type": "string", "minLength": 1 },
+        "rbac": { "$ref": "#/definitions/rbac" },
+        "pvc": { "$ref": "#/definitions/pvc" },
+        "otelCollector": { "$ref": "#/definitions/otelCollector" }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "required": ["enabled", "replicaCount", "image", "serviceAccount", "controlApi", "kvStore", "redis", "slack", "schedule", "slackbotCleanup", "stockInventory"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/image" },
+        "imagePullSecrets": { "type": "array" },
+        "serviceAccount": {
+          "allOf": [
+            { "$ref": "#/definitions/serviceAccount" },
+            { "properties": { "automount": { "const": false } } }
+          ]
+        },
+        "controlApi": {
+          "type": "object",
+          "required": ["url", "tokenSecretRef"],
+          "properties": {
+            "url": { "type": "string" },
+            "tokenSecretRef": { "$ref": "#/definitions/secretRef" }
+          }
+        },
+        "kvStore": { "$ref": "#/definitions/kvStore" },
+        "redis": { "$ref": "#/definitions/redisClient" },
+        "slack": {
+          "type": "object",
+          "required": ["baseUrl", "tokenSecretRef", "dryRun"],
+          "properties": {
+            "baseUrl": { "type": "string" },
+            "tokenSecretRef": {
+              "type": "object",
+              "required": ["name", "appTokenKey", "botTokenKey"],
+              "properties": {
+                "name": { "type": "string" },
+                "appTokenKey": { "type": "string", "minLength": 1 },
+                "botTokenKey": { "type": "string", "minLength": 1 }
+              }
+            },
+            "dryRun": { "type": "boolean" }
+          }
+        },
+        "schedule": { "$ref": "#/definitions/workerConfig" },
+        "slackbotCleanup": { "$ref": "#/definitions/workerConfig" },
+        "stockInventory": { "$ref": "#/definitions/workerConfig" }
+      }
+    },
+    "sessionManager": {
+      "type": "object",
+      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "scia", "github", "kubernetesSession"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "image": { "$ref": "#/definitions/image" },
+        "imagePullSecrets": { "type": "array" },
+        "serviceAccount": {
+          "allOf": [
+            { "$ref": "#/definitions/serviceAccount" },
+            { "properties": { "automount": { "const": true } } }
+          ]
+        },
+        "externalRegistration": { "$ref": "#/definitions/externalRegistration" },
+        "internalApi": {
+          "type": "object",
+          "required": ["tokenSecretRef"],
+          "properties": { "tokenSecretRef": { "$ref": "#/definitions/secretRef" } }
+        },
+        "allocation": { "$ref": "#/definitions/leaderElection" },
+        "encryption": { "$ref": "#/definitions/encryption" },
+        "kvStore": { "$ref": "#/definitions/kvStore" },
+        "redis": { "$ref": "#/definitions/redisClient" },
+        "sessionPersistence": { "$ref": "#/definitions/sessionPersistence" },
+        "sessionControl": { "$ref": "#/definitions/sessionControl" },
+        "scia": { "$ref": "#/definitions/sessionManagerScia" },
+        "github": { "$ref": "#/definitions/sessionManagerGitHub" },
+        "kubernetesSession": {
+          "type": "object",
+          "required": ["enabled", "serviceAccountName", "rbac", "resources", "pvc", "provisioner", "otelCollector"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "serviceAccountName": { "type": "string", "minLength": 1 },
+            "rbac": { "$ref": "#/definitions/rbac" },
+            "resources": { "type": "object" },
+            "pvc": { "$ref": "#/definitions/pvc" },
+            "provisioner": {
+              "type": "object",
+              "required": ["proxyUrl", "tokenSecretRef"],
+              "properties": {
+                "proxyUrl": { "type": "string" },
+                "tokenSecretRef": { "$ref": "#/definitions/secretRef" }
+              }
+            },
+            "otelCollector": { "$ref": "#/definitions/otelCollector" }
+          }
+        }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "architecture": { "const": "standalone" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "worker": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+      "then": {
+        "properties": {
+          "api": { "properties": { "workerControl": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } } } },
+          "worker": {
+            "properties": {
+              "controlApi": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } },
+              "kvStore": { "$ref": "#/definitions/enabledKVStore" }
+            }
+          }
+        },
+        "anyOf": [
+          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+          { "properties": { "worker": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "sessionManager": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+      "then": {
+        "properties": {
+          "api": {
+            "properties": {
+              "sessionManager": {
+                "properties": {
+                  "url": { "minLength": 1 },
+                  "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] }
+                }
+              }
+            }
+          },
+          "sessionManager": {
+            "properties": {
+              "internalApi": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } },
+              "kvStore": { "$ref": "#/definitions/enabledKVStore" },
+              "kubernetesSession": {
+                "properties": {
+                  "enabled": { "const": true },
+                  "provisioner": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                }
+              }
+            }
+          }
+        },
+        "anyOf": [
+          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+          { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "api": { "properties": { "replicaCount": { "minimum": 2 } }, "required": ["replicaCount"] } } },
+      "then": {
+        "anyOf": [
+          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+          { "properties": { "api": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["create", "automount", "name"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "automount": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "secretRef": {
+      "type": "object",
+      "required": ["name", "key"],
+      "properties": {
+        "name": { "type": "string" },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "required": ["keySecretRef"],
+      "properties": {
+        "keySecretRef": { "$ref": "#/definitions/secretRef" }
+      }
+    },
+    "externalRegistration": {
+      "type": "object",
+      "required": ["enabled", "publicUrl", "upstreamUrl", "connectionTokenSecretRef", "hmacSecretRef"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "publicUrl": { "type": "string" },
+        "upstreamUrl": { "type": "string" },
+        "connectionTokenSecretRef": { "$ref": "#/definitions/secretRef" },
+        "hmacSecretRef": { "$ref": "#/definitions/secretRef" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+          "then": {
+            "properties": {
+              "upstreamUrl": { "minLength": 1 },
+              "connectionTokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] },
+              "hmacSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] }
+            }
+          }
+        }
+      ]
+    },
+    "kvStore": {
+      "type": "object",
+      "required": ["namespace", "backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef"],
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string" },
+        "databaseUrl": { "type": "string" },
+        "authToken": { "type": "string" },
+        "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
+        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+      }
+    },
+    "apiKVStore": {
+      "allOf": [
+        { "$ref": "#/definitions/kvStore" },
+        {
+          "required": ["primary", "secondary", "replication", "migration"],
+          "properties": {
+            "primary": { "$ref": "#/definitions/kvStoreBackend" },
+            "secondary": { "$ref": "#/definitions/kvStoreBackend" },
+            "replication": {
+              "type": "object",
+              "required": ["mode"],
+              "properties": { "mode": { "type": "string" } }
+            },
+            "migration": {
+              "type": "object",
+              "required": ["enabled", "dryRun", "overwrite", "output"],
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "dryRun": { "type": "boolean" },
+                "overwrite": { "type": "boolean" },
+                "output": { "enum": ["text", "json"] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "enabledAPIKVStore": {
+      "allOf": [
+        { "$ref": "#/definitions/apiKVStore" },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "backend": { "const": "kubernetes" },
+                "primary": { "properties": { "backend": { "maxLength": 0 } } }
+              }
+            },
+            {
+              "properties": {
+                "backend": { "const": "libsql" },
+                "primary": { "properties": { "backend": { "maxLength": 0 } } }
+              },
+              "anyOf": [
+                { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+              ]
+            },
+            {
+              "properties": {
+                "primary": {
+                  "properties": { "backend": { "const": "libsql" } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                },
+                "secondary": {
+                  "properties": { "backend": { "const": "libsql" } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "kvStoreBackend": {
+      "type": "object",
+      "required": ["backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef"],
+      "properties": {
+        "backend": { "type": "string" },
+        "databaseUrl": { "type": "string" },
+        "authToken": { "type": "string" },
+        "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
+        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+      }
+    },
+    "enabledKVStore": {
+      "allOf": [
+        { "$ref": "#/definitions/kvStore" },
+        {
+          "oneOf": [
+            { "properties": { "backend": { "const": "kubernetes" } } },
+            {
+              "properties": { "backend": { "const": "libsql" } },
+              "anyOf": [
+                { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "redisClient": {
+      "type": "object",
+      "required": ["addr", "existingSecret", "existingSecretPasswordKey", "db", "tlsEnabled", "dialTimeout", "readTimeout", "writeTimeout"],
+      "properties": {
+        "addr": { "type": "string" },
+        "existingSecret": { "type": "string" },
+        "existingSecretPasswordKey": { "type": "string", "minLength": 1 },
+        "db": { "type": "integer", "minimum": 0 },
+        "tlsEnabled": { "type": "boolean" },
+        "dialTimeout": { "type": "string", "minLength": 1 },
+        "readTimeout": { "type": "string", "minLength": 1 },
+        "writeTimeout": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sessionPersistence": {
+      "type": "object",
+      "required": ["backend", "path", "suspendAfter", "persistence", "s3"],
+      "properties": {
+        "backend": { "enum": ["", "volume", "s3"] },
+        "path": { "type": "string", "minLength": 1 },
+        "suspendAfter": { "type": "string", "minLength": 1 },
+        "persistence": {
+          "type": "object",
+          "required": ["enabled", "storageClass", "accessModes", "size"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClass": { "type": "string" },
+            "accessModes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "size": { "type": "string", "minLength": 1 }
+          }
+        },
+        "s3": {
+          "type": "object",
+          "required": ["bucket", "region", "prefix", "endpoint"],
+          "properties": {
+            "bucket": { "type": "string" },
+            "region": { "type": "string" },
+            "prefix": { "type": "string" },
+            "endpoint": { "type": "string" }
+          }
+        }
+      }
+    },
+    "sessionControl": {
+      "type": "object",
+      "required": ["enabled", "directRuntimeEnabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "directRuntimeEnabled": { "type": "boolean" }
+      }
+    },
+    "sessionManagerScia": {
+      "type": "object",
+      "required": ["enabled", "publicBaseUrl", "oauthInternalUrl", "proxyUrl", "credential", "todoistCredential", "userNamespace", "dynamicUserSecretNamePrefix", "noProxy", "googleHosts", "googlePaths", "todoistHosts", "todoistPaths", "sessionSidecar"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "publicBaseUrl": { "type": "string" },
+        "oauthInternalUrl": { "type": "string" },
+        "proxyUrl": { "type": "string" },
+        "credential": { "type": "string" },
+        "todoistCredential": { "type": "string" },
+        "userNamespace": { "type": "string" },
+        "dynamicUserSecretNamePrefix": { "type": "string", "minLength": 1 },
+        "noProxy": { "type": "string" },
+        "googleHosts": { "type": "array", "items": { "type": "string" } },
+        "googlePaths": { "type": "array", "items": { "type": "string" } },
+        "todoistHosts": { "type": "array", "items": { "type": "string" } },
+        "todoistPaths": { "type": "array", "items": { "type": "string" } },
+        "sessionSidecar": {
+          "type": "object",
+          "required": ["enabled", "image", "configImage", "port"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "image": { "type": "string", "minLength": 1 },
+            "configImage": { "type": "string", "minLength": 1 },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        }
+      }
+    },
+    "sessionManagerGitHub": {
+      "type": "object",
+      "required": ["token", "tokenRef", "enterprise", "app"],
+      "properties": {
+        "token": { "type": "string" },
+        "tokenRef": { "$ref": "#/definitions/secretRef" },
+        "enterprise": {
+          "type": "object",
+          "required": ["enabled", "baseUrl", "apiUrl"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "baseUrl": { "type": "string" },
+            "apiUrl": { "type": "string" }
+          }
+        },
+        "app": {
+          "type": "object",
+          "required": ["id", "installationId", "repositoryRestriction", "privateKey"],
+          "properties": {
+            "id": { "type": "string" },
+            "installationId": { "type": "string" },
+            "repositoryRestriction": { "type": "boolean" },
+            "privateKey": {
+              "type": "object",
+              "required": ["secretName", "key"],
+              "properties": {
+                "secretName": { "type": "string" },
+                "key": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "workerConfig": {
+      "type": "object",
+      "required": ["enabled", "leaderElection"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "leaderElection": { "$ref": "#/definitions/leaderElection" }
+      }
+    },
+    "leaderElection": {
+      "type": "object",
+      "required": ["leaseDuration", "renewDeadline", "retryPeriod"],
+      "properties": {
+        "leaseDuration": { "type": "string", "minLength": 1 },
+        "renewDeadline": { "type": "string", "minLength": 1 },
+        "retryPeriod": { "type": "string", "minLength": 1 }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "required": ["create"],
+      "properties": { "create": { "type": "boolean" } }
+    },
+    "pvc": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+    "otelCollector": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": { "enabled": { "type": "boolean" } }
+    }
+  }
+}

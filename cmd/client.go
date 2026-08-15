@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/client"
+	"github.com/takutakahashi/agentapi-proxy/pkg/usagecollector"
 )
 
 var (
@@ -26,24 +28,6 @@ var (
 	annotationIssueURL    string
 	annotationDescription string
 	annotationRunningTask string
-)
-
-// task subcommand flags
-var (
-	taskTitle         string
-	taskDescription   string
-	taskType          string
-	taskScope         string
-	taskTeamID        string
-	taskGroupID       string
-	taskStatus        string
-	taskNewSessionID  string
-	taskFilterStatus  string
-	taskFilterType    string
-	taskFilterScope   string
-	taskFilterTeamID  string
-	taskFilterGroupID string
-	taskLinks         []string
 )
 
 // memory subcommand flags
@@ -91,7 +75,8 @@ var (
 
 // cycle subcommand flags
 var (
-	cycleMaxCount int
+	cycleMaxCount  int
+	usageAgentType string
 )
 
 // resolveClient creates a client using flags if provided, otherwise falling back
@@ -186,6 +171,13 @@ Examples:
   agentapi-proxy client cycle --session-id my-session`,
 	Args: cobra.NoArgs,
 	RunE: runCycle,
+}
+
+var reportUsageCmd = &cobra.Command{
+	Use:   "report-usage",
+	Short: "Report token usage from a Stop hook transcript",
+	Args:  cobra.NoArgs,
+	RunE:  runReportUsage,
 }
 
 var sendCmd = &cobra.Command{
@@ -419,89 +411,17 @@ Either --notify-session-id or --notify-user-id must be specified to identify the
 
 Examples:
   # Send to all users subscribed to a session
-  agentapi-proxy client send-notification \
+  ccplant client send-notification \
     --title "作業が完了しました" \
     --body "作業内容を確認してください" \
     --notify-session-id "$AGENTAPI_SESSION_ID"
 
   # Send to a specific user
-  agentapi-proxy client send-notification \
+  ccplant client send-notification \
     --title "Notification" \
     --body "Something happened" \
     --notify-user-id "user123"`,
 	RunE: runClientSendNotification,
-}
-
-var taskCmd = &cobra.Command{
-	Use:   "task",
-	Short: "Manage tasks",
-	Long:  "Create, list, get, update, and delete tasks",
-}
-
-var taskCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new task",
-	Long: `Create a new task associated with the current session.
-
---session-id and --endpoint flags are required.
-
-Examples:
-  agentapi-proxy client task create \
-    --endpoint http://proxy:8080 \
-    --session-id my-session \
-    --title "My task" \
-    --task-type agent \
-    --scope user
-
-  # With links (url only)
-  agentapi-proxy client task create \
-    --endpoint http://proxy:8080 \
-    --session-id my-session \
-    --title "Review PR" \
-    --task-type user \
-    --scope user \
-    --link "https://github.com/owner/repo/pull/123"
-
-  # With links (url and title)
-  agentapi-proxy client task create \
-    --endpoint http://proxy:8080 \
-    --session-id my-session \
-    --title "Review PR" \
-    --task-type user \
-    --scope user \
-    --link "https://github.com/owner/repo/pull/123|PR #123"`,
-	Run: runTaskCreate,
-}
-
-var taskListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List tasks",
-	Long:  "List tasks with optional filters. --endpoint is required.",
-	Run:   runTaskList,
-}
-
-var taskGetCmd = &cobra.Command{
-	Use:   "get <taskId>",
-	Short: "Get a task by ID",
-	Long:  "Retrieve details of a specific task. --endpoint is required.",
-	Args:  cobra.ExactArgs(1),
-	Run:   runTaskGet,
-}
-
-var taskUpdateCmd = &cobra.Command{
-	Use:   "update <taskId>",
-	Short: "Update a task",
-	Long:  "Partially update an existing task. --endpoint is required.",
-	Args:  cobra.ExactArgs(1),
-	Run:   runTaskUpdate,
-}
-
-var taskDeleteCmd = &cobra.Command{
-	Use:   "delete <taskId>",
-	Short: "Delete a task",
-	Long:  "Delete a task by ID. --endpoint is required.",
-	Args:  cobra.ExactArgs(1),
-	Run:   runTaskDelete,
 }
 
 func init() {
@@ -516,36 +436,6 @@ func init() {
 	annotateSessionCmd.Flags().StringVar(&annotationIssueURL, "issue-url", "", "Issue URL annotation")
 	annotateSessionCmd.Flags().StringVar(&annotationDescription, "description", "", "Description annotation")
 	annotateSessionCmd.Flags().StringVar(&annotationRunningTask, "running-task", "", "Running task annotation")
-
-	// task create flags
-	taskCreateCmd.Flags().StringVar(&taskTitle, "title", "", "Task title (required)")
-	taskCreateCmd.Flags().StringVar(&taskDescription, "description", "", "Task description")
-	taskCreateCmd.Flags().StringVar(&taskType, "task-type", "agent", `Task type: "user" or "agent"`)
-	taskCreateCmd.Flags().StringVar(&taskScope, "scope", "user", `Task scope: "user" or "team"`)
-	taskCreateCmd.Flags().StringVar(&taskTeamID, "team-id", "", "Team ID (required when scope is 'team')")
-	taskCreateCmd.Flags().StringVar(&taskGroupID, "group-id", "", "Task group ID (optional)")
-	taskCreateCmd.Flags().StringArrayVar(&taskLinks, "link", nil, `Link to associate with the task. Format: "url" or "url|title". Can be specified multiple times.`)
-
-	// task list flags
-	taskListCmd.Flags().StringVar(&taskFilterScope, "scope", "", `Filter by scope: "user" or "team"`)
-	taskListCmd.Flags().StringVar(&taskFilterTeamID, "team-id", "", "Filter by team ID")
-	taskListCmd.Flags().StringVar(&taskFilterGroupID, "group-id", "", "Filter by group ID")
-	taskListCmd.Flags().StringVar(&taskFilterStatus, "status", "", `Filter by status: "todo" or "done"`)
-	taskListCmd.Flags().StringVar(&taskFilterType, "task-type", "", `Filter by type: "user" or "agent"`)
-
-	// task update flags
-	taskUpdateCmd.Flags().StringVar(&taskTitle, "title", "", "New title")
-	taskUpdateCmd.Flags().StringVar(&taskDescription, "description", "", "New description")
-	taskUpdateCmd.Flags().StringVar(&taskStatus, "status", "", `New status: "todo" or "done"`)
-	taskUpdateCmd.Flags().StringVar(&taskGroupID, "group-id", "", "New group ID")
-	taskUpdateCmd.Flags().StringVar(&taskNewSessionID, "session-id-new", "", "New session ID to associate with the task")
-
-	// task subcommands
-	taskCmd.AddCommand(taskCreateCmd)
-	taskCmd.AddCommand(taskListCmd)
-	taskCmd.AddCommand(taskGetCmd)
-	taskCmd.AddCommand(taskUpdateCmd)
-	taskCmd.AddCommand(taskDeleteCmd)
 
 	// memory list flags
 	memoryListCmd.Flags().StringVar(&memoryScope, "scope", "user", `Memory scope: "user" or "team"`)
@@ -612,8 +502,10 @@ func init() {
 
 	// cycle flags
 	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 10, "Maximum number of cycles (0 means unlimited, default: 10). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
+	reportUsageCmd.Flags().StringVar(&usageAgentType, "agent-type", "", "Agent type recorded with usage events")
 
 	ClientCmd.AddCommand(cycleCmd)
+	ClientCmd.AddCommand(reportUsageCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -622,9 +514,37 @@ func init() {
 	ClientCmd.AddCommand(annotateSessionCmd)
 	ClientCmd.AddCommand(summarizeDraftsCmd)
 	ClientCmd.AddCommand(sendNotificationClientCmd)
-	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
 	ClientCmd.AddCommand(assetCmd)
+	ClientCmd.AddCommand(backupSessionStateCmd)
+	ClientCmd.AddCommand(scheduleSessionSuspendCmd)
+}
+
+func runReportUsage(cmd *cobra.Command, args []string) error {
+	hookInput, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read stop hook input: %w", err)
+	}
+	events, err := usagecollector.Collect(hookInput, usageAgentType)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		fmt.Println("No usage events found")
+		return nil
+	}
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := c.ReportUsage(ctx, &entities.UsageEventBatch{SessionID: resolvedSessionID, Events: events})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Usage reported: accepted=%d duplicates=%d\n", result.Accepted, result.Duplicates)
+	return nil
 }
 
 const (
@@ -891,83 +811,6 @@ func runEvents(cmd *cobra.Command, args []string) {
 	}
 }
 
-func runTaskCreate(cmd *cobra.Command, args []string) {
-	if taskTitle == "" {
-		fmt.Fprintf(os.Stderr, "Error: --title flag is required\n")
-		os.Exit(1)
-	}
-
-	c, resolvedSessionID, err := resolveClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := context.Background()
-
-	links := make([]client.TaskLink, 0, len(taskLinks))
-	for _, l := range taskLinks {
-		parts := strings.SplitN(l, "|", 2)
-		link := client.TaskLink{URL: parts[0]}
-		if len(parts) == 2 {
-			link.Title = parts[1]
-		}
-		links = append(links, link)
-	}
-
-	req := &client.CreateTaskRequest{
-		Title:       taskTitle,
-		Description: taskDescription,
-		TaskType:    taskType,
-		Scope:       taskScope,
-		TeamID:      taskTeamID,
-		GroupID:     taskGroupID,
-		Links:       links,
-	}
-
-	taskResp, err := c.CreateTask(ctx, resolvedSessionID, req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating task: %v\n", err)
-		os.Exit(1)
-	}
-
-	out, err := json.MarshalIndent(taskResp, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(string(out))
-}
-
-func runTaskList(cmd *cobra.Command, args []string) {
-	c, _, err := resolveClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	ctx := context.Background()
-
-	opts := &client.ListTasksOptions{
-		Scope:    taskFilterScope,
-		TeamID:   taskFilterTeamID,
-		GroupID:  taskFilterGroupID,
-		Status:   taskFilterStatus,
-		TaskType: taskFilterType,
-	}
-
-	listResp, err := c.ListTasks(ctx, opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing tasks: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Tasks (%d total):\n", listResp.Total)
-	for _, t := range listResp.Tasks {
-		fmt.Printf("  [%s] %s (%s/%s) session=%s\n", t.Status, t.Title, t.TaskType, t.Scope, t.SessionID)
-	}
-}
-
 func runAnnotateSession(cmd *cobra.Command, args []string) {
 	c, resolvedSessionID, err := resolveClient()
 	if err != nil {
@@ -1010,89 +853,6 @@ func runAnnotateSession(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	fmt.Println(string(out))
-}
-
-func runTaskGet(cmd *cobra.Command, args []string) {
-	c, _, err := resolveClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	taskID := args[0]
-	ctx := context.Background()
-
-	taskResp, err := c.GetTask(ctx, taskID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting task: %v\n", err)
-		os.Exit(1)
-	}
-
-	out, err := json.MarshalIndent(taskResp, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(string(out))
-}
-
-func runTaskUpdate(cmd *cobra.Command, args []string) {
-	c, _, err := resolveClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	taskID := args[0]
-	ctx := context.Background()
-
-	req := &client.UpdateTaskRequest{}
-	if cmd.Flags().Changed("title") {
-		req.Title = &taskTitle
-	}
-	if cmd.Flags().Changed("description") {
-		req.Description = &taskDescription
-	}
-	if cmd.Flags().Changed("status") {
-		req.Status = &taskStatus
-	}
-	if cmd.Flags().Changed("group-id") {
-		req.GroupID = &taskGroupID
-	}
-	if cmd.Flags().Changed("session-id-new") {
-		req.SessionID = &taskNewSessionID
-	}
-
-	taskResp, err := c.UpdateTask(ctx, taskID, req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error updating task: %v\n", err)
-		os.Exit(1)
-	}
-
-	out, err := json.MarshalIndent(taskResp, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(string(out))
-}
-
-func runTaskDelete(cmd *cobra.Command, args []string) {
-	c, _, err := resolveClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	taskID := args[0]
-	ctx := context.Background()
-
-	if err := c.DeleteTask(ctx, taskID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error deleting task: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Task %s deleted successfully\n", taskID)
 }
 
 // readJSONInput reads JSON from a file path, or from stdin if path is "-" or empty.

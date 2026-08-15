@@ -83,6 +83,9 @@ func (l *Logger) readSessionLog(sessionID string) (SessionLog, error) {
 }
 
 func (l *Logger) writeSessionLog(sessionLog SessionLog) error {
+	if err := os.MkdirAll(l.logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create session log directory %s: %v", l.logDir, err)
+	}
 	filePath := filepath.Join(l.logDir, fmt.Sprintf("%s.json", sessionLog.SessionID))
 
 	data, err := json.MarshalIndent(sessionLog, "", "  ")

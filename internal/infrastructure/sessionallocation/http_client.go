@@ -20,6 +20,7 @@ type Client struct {
 	upstreamAuthToken string
 	metadataOnly      bool
 	client            *http.Client
+	profileRevision   string
 }
 
 func NewClient(baseURL, token string) *Client {
@@ -63,6 +64,32 @@ func (c *Client) NextExternal(ctx context.Context, wait time.Duration) (*core.Al
 	return c.next(ctx, path, wait)
 }
 
+func (c *Client) RuntimeProfileRevision() string {
+	return c.profileRevision
+}
+
+func (c *Client) GetRuntimeProfile(ctx context.Context) (*core.RuntimeProfileSnapshot, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/external-session-manager/runtime-profile", nil)
+	if err != nil {
+		return nil, err
+	}
+	c.authorize(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("GET runtime profile returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var snapshot core.RuntimeProfileSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
 func (c *Client) next(ctx context.Context, path string, wait time.Duration) (*core.AllocationRequest, bool, error) {
 	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
@@ -70,6 +97,9 @@ func (c *Client) next(ctx context.Context, path string, wait time.Duration) (*co
 	}
 	q := u.Query()
 	q.Set("wait", wait.String())
+	if strings.Contains(path, "/external-session-manager/allocations/next") {
+		q.Set("profile_revision", c.profileRevision)
+	}
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -81,6 +111,9 @@ func (c *Client) next(ctx context.Context, path string, wait time.Duration) (*co
 		return nil, false, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	if revision := resp.Header.Get("X-AgentAPI-Runtime-Profile-Revision"); revision != "" {
+		c.profileRevision = revision
+	}
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, false, nil
 	}

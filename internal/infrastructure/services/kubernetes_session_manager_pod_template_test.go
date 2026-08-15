@@ -73,8 +73,8 @@ spec:
 
 	main := template.Spec.Containers[0]
 	assert.Equal(t, "agentapi", main.Name)
-	assert.Equal(t, []string{"agentapi-proxy"}, main.Command)
-	assert.Equal(t, []string{"agent-provisioner"}, main.Args)
+	assert.Equal(t, []string{"/bin/sh", "-c"}, main.Command)
+	assert.Equal(t, []string{`exec "${CCPLANT_BINARY_PATH:-ccplant}" agent-provisioner`}, main.Args)
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "EXTRA_ENV", Value: "enabled"})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "extra-config", MountPath: "/etc/extra-config", ReadOnly: true})
 	assert.Equal(t, resource.MustParse("250m"), main.Resources.Requests[corev1.ResourceCPU])

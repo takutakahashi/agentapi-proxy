@@ -1,0 +1,58 @@
+{{- $trial := .Values.libsqlTrial | default dict }}
+{{- if ($trial.enabled | default false) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-libsql
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: libsql-trial
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: libsql-trial
+  template:
+    metadata:
+      labels:
+        {{- include "agentapi-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: libsql-trial
+    spec:
+      containers:
+        - name: libsql-server
+          image: {{ ($trial.image | default "ghcr.io/tursodatabase/libsql-server:3ec6803") | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/sqld
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir:
+              sizeLimit: {{ ($trial.storageSize | default "1Gi") | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-libsql
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: libsql-trial
+spec:
+  selector:
+    {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: libsql-trial
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

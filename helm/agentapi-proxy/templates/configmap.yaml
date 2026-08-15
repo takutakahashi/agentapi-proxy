@@ -20,6 +20,7 @@ data:
           - {{ . | quote }}
         {{- end }}
         {{- end }}
+        allow_users_without_team: {{ .Values.authConfig.github.user_mapping.allow_users_without_team | default false }}
         {{- if .Values.authConfig.github.user_mapping.team_role_mapping }}
         team_role_mapping:
         {{- range $teamKey, $teamRule := .Values.authConfig.github.user_mapping.team_role_mapping }}

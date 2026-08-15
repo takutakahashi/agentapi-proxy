@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -18,7 +18,7 @@ import (
 // The session controller uses a type-assertion to obtain this capability, keeping
 // the core SessionManager interface unchanged.
 type ProxyStatusWatcher interface {
-	SubscribeStatusEvents() (<-chan services.SessionStatusEvent, func())
+	SubscribeStatusEvents() (<-chan portrepos.SessionStatusEvent, func())
 }
 
 // StreamSessionsStatus handles GET /sessions/status/stream.
@@ -158,7 +158,7 @@ func (c *SessionController) WaitSessionsStatus(ctx echo.Context) error {
 }
 
 // writeSessionStatusSSEEvent marshals evt and writes a data event to the SSE response.
-func writeSessionStatusSSEEvent(w *echo.Response, evt services.SessionStatusEvent) error {
+func writeSessionStatusSSEEvent(w *echo.Response, evt portrepos.SessionStatusEvent) error {
 	payload, err := json.Marshal(evt)
 	if err != nil {
 		return err

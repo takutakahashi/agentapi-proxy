@@ -18,7 +18,10 @@ type Service struct {
 	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets (legacy)
 	subscriptionReader SubscriptionReader       // Optional, for reading subscriptions from K8s Secrets
 	subscriptionWriter SubscriptionWriter       // Optional, for writing subscriptions directly to K8s Secrets
+	baseURLResolver    func() string
 }
+
+func (s *Service) SetBaseURLResolver(resolver func() string) { s.baseURLResolver = resolver }
 
 // NewService creates a new notification service
 func NewService(baseDir string) (*Service, error) {
@@ -224,7 +227,7 @@ func (s *Service) DeleteSlackSubscription(userID string) error {
 
 // GetSubscriptions returns all active subscriptions for a user
 func (s *Service) GetSubscriptions(userID string) ([]Subscription, error) {
-	return s.storage.GetSubscriptions(userID)
+	return s.readCurrentSubscriptions(userID)
 }
 
 // DeleteSubscription removes a subscription by endpoint
@@ -464,7 +467,14 @@ func (s *Service) ProcessWebhook(webhook WebhookRequest) error {
 	}
 	// Set URL only if not already provided (e.g., enriched by the webhook handler)
 	if _, exists := data["url"]; !exists {
-		if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
+		baseURL := ""
+		if s.baseURLResolver != nil {
+			baseURL = s.baseURLResolver()
+		}
+		if baseURL == "" {
+			baseURL = os.Getenv("NOTIFICATION_BASE_URL")
+		}
+		if baseURL != "" {
 			data["url"] = baseURL + "/sessions/" + webhook.SessionID
 		} else {
 			data["url"] = fmt.Sprintf("/sessions/%s", webhook.SessionID)

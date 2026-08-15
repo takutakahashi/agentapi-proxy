@@ -12,12 +12,43 @@ import (
 	"strings"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // HTTPClient defines the interface for making HTTP requests
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+// ReportUsage sends response-level usage events collected by a session Stop hook.
+func (c *Client) ReportUsage(ctx context.Context, batch *entities.UsageEventBatch) (*entities.UsageInsertResult, error) {
+	body, err := json.Marshal(batch)
+	if err != nil {
+		return nil, fmt.Errorf("marshal usage events: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/usage-events", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.applyMiddlewares(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("report usage failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var result entities.UsageInsertResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // RequestMiddleware is a function that modifies an HTTP request
@@ -543,302 +574,6 @@ func (c *Client) GetStatus(ctx context.Context, sessionID string) (*StatusRespon
 	}
 
 	return &statusResp, nil
-}
-
-// TaskLink represents a link associated with a task
-type TaskLink struct {
-	ID    string `json:"id,omitempty"`
-	URL   string `json:"url"`
-	Title string `json:"title,omitempty"`
-}
-
-// CreateTaskRequest represents the request body for creating a new task.
-// SessionID is set automatically from the sessionID function argument.
-type CreateTaskRequest struct {
-	Title       string     `json:"title"`
-	Description string     `json:"description,omitempty"`
-	TaskType    string     `json:"task_type"`         // "user" or "agent"
-	Scope       string     `json:"scope"`             // "user" or "team"
-	TeamID      string     `json:"team_id,omitempty"` // required when scope=="team"
-	GroupID     string     `json:"group_id,omitempty"`
-	SessionID   string     `json:"session_id"` // set from function argument
-	Links       []TaskLink `json:"links,omitempty"`
-}
-
-// UpdateTaskRequest represents the request body for partially updating a task.
-// Only non-nil fields are updated.
-type UpdateTaskRequest struct {
-	Title       *string     `json:"title,omitempty"`
-	Description *string     `json:"description,omitempty"`
-	Status      *string     `json:"status,omitempty"` // "todo" or "done"
-	GroupID     *string     `json:"group_id,omitempty"`
-	SessionID   *string     `json:"session_id,omitempty"`
-	Links       *[]TaskLink `json:"links,omitempty"`
-}
-
-// TaskResponse represents a single task returned by the API
-type TaskResponse struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description,omitempty"`
-	Status      string     `json:"status"`
-	TaskType    string     `json:"task_type"`
-	Scope       string     `json:"scope"`
-	OwnerID     string     `json:"owner_id"`
-	TeamID      string     `json:"team_id,omitempty"`
-	GroupID     string     `json:"group_id,omitempty"`
-	SessionID   string     `json:"session_id,omitempty"`
-	Links       []TaskLink `json:"links"`
-	CreatedAt   string     `json:"created_at"`
-	UpdatedAt   string     `json:"updated_at"`
-}
-
-// TaskListResponse represents a list of tasks
-type TaskListResponse struct {
-	Tasks []*TaskResponse `json:"tasks"`
-	Total int             `json:"total"`
-}
-
-// ListTasksOptions specifies optional filters for listing tasks
-type ListTasksOptions struct {
-	Scope    string // "user" or "team"
-	TeamID   string
-	GroupID  string
-	Status   string // "todo" or "done"
-	TaskType string // "user" or "agent"
-}
-
-// CreateTask creates a new task associated with the given session.
-// sessionID is required and will be embedded in the request body.
-func (c *Client) CreateTask(ctx context.Context, sessionID string, req *CreateTaskRequest) (*TaskResponse, error) {
-	if sessionID == "" {
-		return nil, fmt.Errorf("session ID is required")
-	}
-	if req == nil {
-		return nil, fmt.Errorf("request is required")
-	}
-
-	// Inject sessionID into the request body
-	req.SessionID = sessionID
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/tasks", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	if err := c.applyMiddlewares(httpReq); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var taskResp TaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &taskResp, nil
-}
-
-// GetTask retrieves a task by its ID
-func (c *Client) GetTask(ctx context.Context, taskID string) (*TaskResponse, error) {
-	if taskID == "" {
-		return nil, fmt.Errorf("task ID is required")
-	}
-
-	reqURL := fmt.Sprintf("%s/tasks/%s", c.baseURL, taskID)
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	if err := c.applyMiddlewares(httpReq); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("task not found")
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var taskResp TaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &taskResp, nil
-}
-
-// ListTasks retrieves a list of tasks with optional filters
-func (c *Client) ListTasks(ctx context.Context, opts *ListTasksOptions) (*TaskListResponse, error) {
-	u, err := url.Parse(c.baseURL + "/tasks")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	if opts != nil {
-		q := u.Query()
-		if opts.Scope != "" {
-			q.Set("scope", opts.Scope)
-		}
-		if opts.TeamID != "" {
-			q.Set("team_id", opts.TeamID)
-		}
-		if opts.GroupID != "" {
-			q.Set("group_id", opts.GroupID)
-		}
-		if opts.Status != "" {
-			q.Set("status", opts.Status)
-		}
-		if opts.TaskType != "" {
-			q.Set("task_type", opts.TaskType)
-		}
-		u.RawQuery = q.Encode()
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	if err := c.applyMiddlewares(httpReq); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var listResp TaskListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &listResp, nil
-}
-
-// UpdateTask partially updates an existing task
-func (c *Client) UpdateTask(ctx context.Context, taskID string, req *UpdateTaskRequest) (*TaskResponse, error) {
-	if taskID == "" {
-		return nil, fmt.Errorf("task ID is required")
-	}
-	if req == nil {
-		return nil, fmt.Errorf("request is required")
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	reqURL := fmt.Sprintf("%s/tasks/%s", c.baseURL, taskID)
-	httpReq, err := http.NewRequestWithContext(ctx, "PUT", reqURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	if err := c.applyMiddlewares(httpReq); err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("task not found")
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var taskResp TaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &taskResp, nil
-}
-
-// DeleteTask deletes a task by its ID
-func (c *Client) DeleteTask(ctx context.Context, taskID string) error {
-	if taskID == "" {
-		return fmt.Errorf("task ID is required")
-	}
-
-	reqURL := fmt.Sprintf("%s/tasks/%s", c.baseURL, taskID)
-	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	if err := c.applyMiddlewares(httpReq); err != nil {
-		return err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("task not found")
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
 }
 
 // MemoryEntry represents a memory entry from the proxy

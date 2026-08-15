@@ -2,7 +2,10 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -52,6 +55,27 @@ type ProvisionRequest struct {
 
 func (m *KubernetesSessionManager) ValidateProvisionerToken(token string) bool {
 	return m.k8sConfig != nil && m.k8sConfig.ProvisionerToken != "" && token == m.k8sConfig.ProvisionerToken
+}
+
+const sessionControlTokenContext = "session-control-auth:v1\x00"
+
+func deriveSessionControlToken(masterKey, sessionID string) string {
+	mac := hmac.New(sha256.New, []byte(masterKey))
+	_, _ = mac.Write([]byte(sessionControlTokenContext))
+	_, _ = mac.Write([]byte(sessionID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func validateSessionControlToken(masterKey, sessionID, token string) bool {
+	if masterKey == "" || sessionID == "" || token == "" {
+		return false
+	}
+	expected := deriveSessionControlToken(masterKey, sessionID)
+	return hmac.Equal([]byte(expected), []byte(token))
+}
+
+func (m *KubernetesSessionManager) ValidateSessionControlToken(sessionID, token string) bool {
+	return m.k8sConfig != nil && validateSessionControlToken(m.k8sConfig.ProvisionerToken, sessionID, token)
 }
 
 func (m *KubernetesSessionManager) ensureProvisionerToken(ctx context.Context) error {

@@ -86,6 +86,15 @@ func canAccessMemory(memory *entities.Memory, requestingUserID string, teamIDs [
 	}
 }
 
+func containsTeam(teamIDs []string, teamID string) bool {
+	for _, id := range teamIDs {
+		if id == teamID {
+			return true
+		}
+	}
+	return false
+}
+
 // ListMemories lists memories with the given filters for the requesting user
 func (uc *MCPMemoryToolsUseCase) ListMemories(ctx context.Context, input ListMemoriesInput, requestingUserID string, teamIDs []string) ([]MemoryInfo, error) {
 	if uc.memoryRepo == nil {

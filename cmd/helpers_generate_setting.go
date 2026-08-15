@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"gopkg.in/yaml.v3"
 )
@@ -371,7 +372,7 @@ func runGenerateSettingSchedule() error {
 			},
 		},
 	}
-	result.Startup = buildStartupConfig(agentType)
+	result.Startup = buildStartupConfig(agentType, env)
 	logSessionSettingsSummary(result)
 
 	return outputSessionSettings(result, generateSettingOutputFmt)
@@ -469,7 +470,7 @@ func runGenerateSettingSlackBot(cmd *cobra.Command) error {
 			},
 		},
 	}
-	result.Startup = buildStartupConfig(agentType)
+	result.Startup = buildStartupConfig(agentType, env)
 	logSessionSettingsSummary(result)
 
 	return outputSessionSettings(result, generateSettingOutputFmt)
@@ -569,14 +570,15 @@ func applySessionEnv(env map[string]string, sessionEnv map[string]string) {
 }
 
 // buildStartupConfig returns the startup command config for the given agent type.
-func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
+func buildStartupConfig(agentType string, env map[string]string) sessionsettings.StartupConfig {
+	proxyBinary := proxybinary.FromMap(env)
 	switch agentType {
 	case "claude-acp":
 		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
 		// Port is determined at runtime via AGENTAPI_PORT env var.
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- bunx @agentclientprotocol/claude-agent-acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{proxyBinary},
 			Args:    []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
 		}
 	case "codex-acp":
@@ -584,7 +586,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// https://github.com/agentclientprotocol/codex-acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y @agentclientprotocol/codex-acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{proxyBinary},
 			Args:    []string{"acp-server", "--", "npx", "-y", "@agentclientprotocol/codex-acp"},
 		}
 	case "pi-ollama":
@@ -592,7 +594,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// https://github.com/svkozak/pi-acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y pi-acp]")
 		return sessionsettings.StartupConfig{
-			Command:   []string{"agentapi-proxy"},
+			Command:   []string{proxyBinary},
 			Args:      []string{"acp-server", "--", "npx", "-y", "pi-acp"},
 			PreScript: piOllamaInstallPreScript,
 		}
@@ -601,7 +603,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// https://cursor.com/docs/cli/acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server --auto-approve --raw-json-log -- agent acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{proxyBinary},
 			Args:    []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"},
 		}
 	default:

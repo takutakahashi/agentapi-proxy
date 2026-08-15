@@ -25,7 +25,7 @@ type KubernetesSession struct {
 	status            string
 	cancelFunc        context.CancelFunc
 	mutex             sync.RWMutex
-	description       string                           // Preserved description from Secret (not truncated by label limits)
+	description       string // Preserved description from Secret (not truncated by label limits)
 	annotations       entities.SessionAnnotations
 	webhookPayload    []byte                           // Webhook payload JSON
 	resolvedAPIKey    string                           // API key resolved during session creation, used by memory-sync sidecar
@@ -173,6 +173,9 @@ func (s *KubernetesSession) SetStatus(status string) {
 	s.mutex.Lock()
 	changed := s.status != status
 	s.status = status
+	if changed {
+		s.updatedAt = time.Now()
+	}
 	cb := s.statusChangeCallback
 	s.mutex.Unlock()
 

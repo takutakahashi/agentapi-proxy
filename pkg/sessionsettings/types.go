@@ -169,20 +169,21 @@ type RegistryConfig struct {
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
-	Session        SessionMeta          `yaml:"session"                   json:"session"`
-	Env            map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
-	Claude         ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
-	Codex          CodexConfig          `yaml:"codex,omitempty"           json:"codex,omitempty"`
-	Pi             PiConfig             `yaml:"pi,omitempty"              json:"pi,omitempty"`
-	Repository     *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
-	InitialMessage string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
-	WebhookPayload string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
-	Startup        StartupConfig        `yaml:"startup,omitempty"         json:"startup,omitempty"`
-	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
-	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
-	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
-	Sandbox        *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
-	Docker         *DockerConfig        `yaml:"docker,omitempty"          json:"docker,omitempty"`
+	Session               SessionMeta          `yaml:"session"                   json:"session"`
+	Env                   map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
+	Claude                ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
+	Codex                 CodexConfig          `yaml:"codex,omitempty"           json:"codex,omitempty"`
+	Pi                    PiConfig             `yaml:"pi,omitempty"              json:"pi,omitempty"`
+	Repository            *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
+	InitialMessage        string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
+	WebhookPayload        string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
+	Startup               StartupConfig        `yaml:"startup,omitempty"         json:"startup,omitempty"`
+	Github                *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
+	SlackParams           *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
+	OtelCollector         *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
+	UsageReportingEnabled bool                 `yaml:"usage_reporting_enabled,omitempty" json:"usage_reporting_enabled,omitempty"`
+	Sandbox               *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
+	Docker                *DockerConfig        `yaml:"docker,omitempty"          json:"docker,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.
@@ -193,6 +194,58 @@ type SessionSettings struct {
 	// was introduced.  The provisioner falls back to this field when Files is empty.
 	Credentials       string   `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 	UnsyncedFilePaths []string `yaml:"unsynced_file_paths,omitempty" json:"unsynced_file_paths,omitempty"`
+	// ParentRuntime configures the Session Pod's outbound reverse-RPC connection
+	// to the parent proxy. It is populated only for externally allocated sessions.
+	ParentRuntime *ParentRuntimeConfig `yaml:"parent_runtime,omitempty" json:"parent_runtime,omitempty"`
+}
+
+// ParentRuntimeConfig is the per-session bootstrap material used by the
+// provisioner to connect directly to the parent proxy after local provisioning.
+type ParentRuntimeConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	Endpoint   string `yaml:"endpoint" json:"endpoint"`
+	SessionID  string `yaml:"session_id" json:"session_id"`
+	ManagerID  string `yaml:"manager_id" json:"manager_id"`
+	Token      string `yaml:"token" json:"token"`
+	Generation int64  `yaml:"generation" json:"generation"`
+}
+
+// RuntimeProfile is the parent-owned Kubernetes session runtime configuration
+// inherited by an External Session Manager for every allocation. ESMs do not
+// expose independent overrides for these fields.
+type RuntimeProfile struct {
+	Version    int                      `yaml:"version" json:"version"`
+	Kubernetes KubernetesRuntimeProfile `yaml:"kubernetes" json:"kubernetes"`
+	Scia       SciaRuntimeProfile       `yaml:"scia" json:"scia"`
+}
+
+type KubernetesRuntimeProfile struct {
+	ServiceAccount                 string `yaml:"service_account" json:"service_account"`
+	NetworkFilterImage             string `yaml:"network_filter_image" json:"network_filter_image"`
+	NetworkFilterCPURequest        string `yaml:"network_filter_cpu_request" json:"network_filter_cpu_request"`
+	NetworkFilterCPULimit          string `yaml:"network_filter_cpu_limit" json:"network_filter_cpu_limit"`
+	NetworkFilterMemoryRequest     string `yaml:"network_filter_memory_request" json:"network_filter_memory_request"`
+	NetworkFilterMemoryLimit       string `yaml:"network_filter_memory_limit" json:"network_filter_memory_limit"`
+	NetworkFilterInitCPURequest    string `yaml:"network_filter_init_cpu_request" json:"network_filter_init_cpu_request"`
+	NetworkFilterInitCPULimit      string `yaml:"network_filter_init_cpu_limit" json:"network_filter_init_cpu_limit"`
+	NetworkFilterInitMemoryRequest string `yaml:"network_filter_init_memory_request" json:"network_filter_init_memory_request"`
+	NetworkFilterInitMemoryLimit   string `yaml:"network_filter_init_memory_limit" json:"network_filter_init_memory_limit"`
+}
+
+type SciaRuntimeProfile struct {
+	Enabled                   bool     `yaml:"enabled" json:"enabled"`
+	SessionSidecarEnabled     bool     `yaml:"session_sidecar_enabled" json:"session_sidecar_enabled"`
+	SessionSidecarImage       string   `yaml:"session_sidecar_image" json:"session_sidecar_image"`
+	SessionSidecarConfigImage string   `yaml:"session_sidecar_config_image" json:"session_sidecar_config_image"`
+	SessionSidecarPort        int      `yaml:"session_sidecar_port" json:"session_sidecar_port"`
+	Credential                string   `yaml:"credential" json:"credential"`
+	UserNamespace             string   `yaml:"user_namespace" json:"user_namespace"`
+	NoProxy                   string   `yaml:"no_proxy" json:"no_proxy"`
+	GoogleHosts               []string `yaml:"google_hosts" json:"google_hosts"`
+	GooglePaths               []string `yaml:"google_paths" json:"google_paths"`
+	TodoistCredential         string   `yaml:"todoist_credential" json:"todoist_credential"`
+	TodoistHosts              []string `yaml:"todoist_hosts" json:"todoist_hosts"`
+	TodoistPaths              []string `yaml:"todoist_paths" json:"todoist_paths"`
 }
 
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.
@@ -224,14 +277,16 @@ type SlackParams struct {
 
 // SessionMeta contains session identification metadata.
 type SessionMeta struct {
-	ID        string            `yaml:"id"                  json:"id"`
-	UserID    string            `yaml:"user_id"             json:"user_id"`
-	Scope     string            `yaml:"scope"               json:"scope"`
-	TeamID    string            `yaml:"team_id,omitempty"   json:"team_id,omitempty"`
-	AgentType string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
-	Oneshot   bool              `yaml:"oneshot,omitempty"   json:"oneshot,omitempty"`
-	Teams     []string          `yaml:"teams,omitempty"     json:"teams,omitempty"`
-	MemoryKey map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
+	ID                 string            `yaml:"id"                  json:"id"`
+	UserID             string            `yaml:"user_id"             json:"user_id"`
+	Scope              string            `yaml:"scope"               json:"scope"`
+	TeamID             string            `yaml:"team_id,omitempty"   json:"team_id,omitempty"`
+	AgentType          string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
+	Oneshot            bool              `yaml:"oneshot,omitempty"   json:"oneshot,omitempty"`
+	Teams              []string          `yaml:"teams,omitempty"     json:"teams,omitempty"`
+	MemoryKey          map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
+	ResumeFrom         string            `yaml:"resume_from,omitempty" json:"resume_from,omitempty"`
+	PersistenceEnabled bool              `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.

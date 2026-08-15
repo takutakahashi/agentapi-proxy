@@ -49,9 +49,18 @@ import (
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
-	Static *StaticAuthConfig `json:"static,omitempty" mapstructure:"static"`
-	GitHub *GitHubAuthConfig `json:"github,omitempty" mapstructure:"github"`
-	AWS    *AWSAuthConfig    `json:"aws,omitempty" mapstructure:"aws"`
+	Static         *StaticAuthConfig         `json:"static,omitempty" mapstructure:"static"`
+	BootstrapAdmin *BootstrapAdminAuthConfig `json:"bootstrap_admin,omitempty" mapstructure:"bootstrap_admin"`
+	GitHub         *GitHubAuthConfig         `json:"github,omitempty" mapstructure:"github"`
+}
+
+// BootstrapAdminAuthConfig provides a break-glass administrator identity that
+// is available before any external authentication provider is configured.
+type BootstrapAdminAuthConfig struct {
+	Enabled  bool   `json:"enabled" mapstructure:"enabled"`
+	UserID   string `json:"user_id" mapstructure:"user_id"`
+	Username string `json:"username" mapstructure:"username"`
+	Token    string `json:"token" mapstructure:"token"`
 }
 
 // StaticAuthConfig represents static API key authentication
@@ -81,9 +90,10 @@ type GitHubOAuthConfig struct {
 
 // GitHubUserMapping represents user role mapping configuration
 type GitHubUserMapping struct {
-	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
-	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
-	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
+	DefaultRole           string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
+	DefaultPermissions    []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
+	AllowUsersWithoutTeam bool                    `json:"allow_users_without_team" mapstructure:"allow_users_without_team" yaml:"allow_users_without_team"`
+	TeamRoleMapping       map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
 }
 
 // TeamRoleRule represents a team-based role rule
@@ -91,25 +101,6 @@ type TeamRoleRule struct {
 	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
 	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
 	EnvFile     string   `json:"env_file,omitempty" mapstructure:"env_file" yaml:"env_file"`
-}
-
-// AWSAuthConfig represents AWS IAM authentication configuration
-type AWSAuthConfig struct {
-	Enabled           bool           `json:"enabled" mapstructure:"enabled"`
-	Region            string         `json:"region" mapstructure:"region"`
-	AllowedAccountIDs []string       `json:"allowed_account_ids" mapstructure:"allowed_account_ids"` // Required: list of allowed AWS account IDs (empty = deny all)
-	TeamTagKey        string         `json:"team_tag_key" mapstructure:"team_tag_key"`
-	RequiredTagKey    string         `json:"required_tag_key" mapstructure:"required_tag_key"`     // Tag key that must exist (e.g., "agentapi-proxy")
-	RequiredTagVal    string         `json:"required_tag_value" mapstructure:"required_tag_value"` // Expected tag value (e.g., "enabled")
-	CacheTTL          string         `json:"cache_ttl" mapstructure:"cache_ttl"`
-	UserMapping       AWSUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
-}
-
-// AWSUserMapping represents AWS user role mapping configuration
-type AWSUserMapping struct {
-	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
-	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
-	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
 }
 
 // RoleEnvFilesConfig represents role-based environment files configuration
@@ -214,6 +205,8 @@ type StockInventoryWorkerConfig struct {
 // Note: Sandbox (network filter) and scia sidecar are now always enabled.
 // Only DockerEnabled remains configurable.
 type StockInventoryPoolConfig struct {
+	// Name is the logical session pool claimed directly by idle runners.
+	Name string `json:"name" mapstructure:"name"`
 	// TargetCount is the desired number of stock sessions for this capability pool.
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
@@ -304,12 +297,6 @@ type KubernetesSessionConfig struct {
 	ProvisionerToken string `json:"provisioner_token" mapstructure:"provisioner_token"`
 	// ProvisionerProxyURL is the base URL session Pods use to reach this proxy.
 	ProvisionerProxyURL string `json:"provisioner_proxy_url" mapstructure:"provisioner_proxy_url"`
-	// ClaudeConfigUserConfigMapPrefix is the prefix for user-specific ConfigMap names
-	// Full name will be: {prefix}-{username} (e.g., claude-config-johndoe)
-	ClaudeConfigUserConfigMapPrefix string `json:"claude_config_user_configmap_prefix" mapstructure:"claude_config_user_configmap_prefix"`
-	// InitContainerImage is the image used for the init container that sets up Claude configuration
-	// Defaults to the same image as the session container (Image field) if not specified
-	InitContainerImage string `json:"init_container_image" mapstructure:"init_container_image"`
 	// GitHubSecretName is the name of the Kubernetes Secret containing GitHub authentication credentials
 	// This Secret is used by the clone-repo init container for repository cloning
 	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID
@@ -341,22 +328,12 @@ type KubernetesSessionConfig struct {
 	// OpenTelemetry Collector configuration
 	// OtelCollectorEnabled enables OpenTelemetry Collector sidecar for metrics collection
 	OtelCollectorEnabled bool `json:"otel_collector_enabled" mapstructure:"otel_collector_enabled"`
-	// OtelCollectorImage is the container image for otelcol sidecar
-	OtelCollectorImage string `json:"otel_collector_image" mapstructure:"otel_collector_image"`
 	// OtelCollectorScrapeInterval is the scrape interval for Claude Code metrics
 	OtelCollectorScrapeInterval string `json:"otel_collector_scrape_interval" mapstructure:"otel_collector_scrape_interval"`
 	// OtelCollectorClaudeCodePort is the port where Claude Code exposes metrics
 	OtelCollectorClaudeCodePort int `json:"otel_collector_claude_code_port" mapstructure:"otel_collector_claude_code_port"`
 	// OtelCollectorExporterPort is the port where otelcol exposes labeled metrics
 	OtelCollectorExporterPort int `json:"otel_collector_exporter_port" mapstructure:"otel_collector_exporter_port"`
-	// OtelCollectorCPURequest is the CPU request for otelcol sidecar
-	OtelCollectorCPURequest string `json:"otel_collector_cpu_request" mapstructure:"otel_collector_cpu_request"`
-	// OtelCollectorCPULimit is the CPU limit for otelcol sidecar
-	OtelCollectorCPULimit string `json:"otel_collector_cpu_limit" mapstructure:"otel_collector_cpu_limit"`
-	// OtelCollectorMemoryRequest is the memory request for otelcol sidecar
-	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
-	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
-	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
 
 	// Slack Integration configuration
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
@@ -366,16 +343,8 @@ type KubernetesSessionConfig struct {
 	// Defaults to "bot-token"
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
 
-	// SandboxInitImage is deprecated. The network filter image is also used to
-	// restore rules so initial setup and runtime updates use the same iptables backend.
-	SandboxInitImage string `json:"sandbox_init_image" mapstructure:"sandbox_init_image"`
-
-	// SandboxIptablesConfigMapName is deprecated. Sandbox iptables rules are now
-	// generated by nfa into an EmptyDir and restored by SandboxInitImage.
-	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
-
 	// NetworkFilterImage is the container image for the iptables rule generation init
-	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.2.
+	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.3.
 	// The init container reads the generated policy config and runs "nfa setup-iptables --output";
 	// the sidecar runs "nfa proxy --deferred-policy".
 	NetworkFilterImage string `json:"network_filter_image" mapstructure:"network_filter_image"`
@@ -437,6 +406,15 @@ type MemoryS3Config struct {
 	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
 }
 
+// SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
+// to Path; "s3" uses any S3-compatible service (including Garage).
+type SessionPersistenceConfig struct {
+	Backend      string          `json:"backend" mapstructure:"backend"`
+	Path         string          `json:"path" mapstructure:"path"`
+	SuspendAfter string          `json:"suspend_after" mapstructure:"suspend_after"`
+	S3           *MemoryS3Config `json:"s3,omitempty" mapstructure:"s3"`
+}
+
 // AssetConfig represents static asset upload configuration.
 type AssetConfig struct {
 	// Backend is the storage backend type: "nginx" (default) or "s3".
@@ -473,10 +451,35 @@ type SessionManagerConfig struct {
 	// ConnectionToken authenticates this manager to 親プロキシ's allocator endpoint.
 	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
 	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
-	// PublicURL is the URL 親プロキシ should use to route requests back to this manager.
-	// It is included in allocation completion results. Can also be set via
-	// SESSION_MANAGER_PUBLIC_URL.
+	// ID identifies this manager in the cluster-wide registry.
+	ID string `json:"id" mapstructure:"id"`
+	// RunnerPool enables GitHub Actions-style runner claim mode for stock pods.
+	RunnerPool string `json:"runner_pool" mapstructure:"runner_pool"`
+	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
+	// to this manager when the outbound control lease is unavailable.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
+	// APIURL is the private session-manager API used by the public API process.
+	// It is intentionally distinct from UpstreamURL, which is only used when
+	// this manager is registered as an external manager of another control plane.
+	APIURL string `json:"api_url" mapstructure:"api_url"`
+	// APIToken authenticates outbound API -> session-manager requests.
+	APIToken string `json:"api_token" mapstructure:"api_token"`
+	// InternalAPIToken authenticates inbound requests to the private manager API.
+	InternalAPIToken string                         `json:"internal_api_token" mapstructure:"internal_api_token"`
+	Allocation       SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+}
+
+type SessionManagerAllocationConfig struct {
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// WorkerConfig contains the only control-plane dependency of the worker.
+// Worker persistence and leader election use KVStore and Redis respectively.
+type WorkerConfig struct {
+	ControlAPIURL   string `json:"control_api_url" mapstructure:"control_api_url"`
+	ControlAPIToken string `json:"control_api_token" mapstructure:"control_api_token"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -499,8 +502,41 @@ type RedisConfig struct {
 	WriteTimeout string `json:"write_timeout" mapstructure:"write_timeout"`
 }
 
+// KVStoreConfig configures persistence for application data represented as
+// Kubernetes Secrets and ConfigMaps by the repository layer.
+type KVStoreBackendConfig struct {
+	Backend     string `json:"backend" mapstructure:"backend"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+}
+
+type KVStoreReplicationConfig struct {
+	Mode string `json:"mode" mapstructure:"mode"`
+}
+
+type KVStoreConfig struct {
+	// Legacy single-backend fields. They remain supported as primary-only configuration.
+	Namespace   string                   `json:"namespace" mapstructure:"namespace"`
+	Backend     string                   `json:"backend" mapstructure:"backend"`
+	DatabaseURL string                   `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string                   `json:"auth_token" mapstructure:"auth_token"`
+	Primary     *KVStoreBackendConfig    `json:"primary" mapstructure:"primary"`
+	Secondary   *KVStoreBackendConfig    `json:"secondary" mapstructure:"secondary"`
+	Replication KVStoreReplicationConfig `json:"replication" mapstructure:"replication"`
+}
+
+// UsageConfig configures the dedicated libSQL database used for usage events.
+// It is intentionally independent from KVStoreConfig.
+type UsageConfig struct {
+	Enabled     bool   `json:"enabled" mapstructure:"enabled"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
+	// BinaryPath is the ccplant executable used by generated hooks and child processes.
+	BinaryPath string `json:"binary_path" mapstructure:"binary_path"`
 	// Auth represents authentication configuration
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
@@ -520,65 +556,33 @@ type Config struct {
 	// Scia is the configuration for scia OAuth token broker/proxy integration.
 	Scia SciaConfig `json:"scia" mapstructure:"scia"`
 	// Memory is the configuration for memory storage backend
-	Memory MemoryConfig `json:"memory" mapstructure:"memory"`
+	Memory             MemoryConfig             `json:"memory" mapstructure:"memory"`
+	SessionPersistence SessionPersistenceConfig `json:"session_persistence" mapstructure:"session_persistence"`
 	// Asset is the configuration for static asset upload and serving.
 	Asset AssetConfig `json:"asset" mapstructure:"asset"`
 	// Slack is the configuration for Slack bot inbound webhook functionality
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
 	// SessionManager is the configuration for the session manager forwarding endpoint.
 	SessionManager SessionManagerConfig `json:"session_manager" mapstructure:"session_manager"`
+	// Worker is deliberately separate from KubernetesSession. A worker has no
+	// Kubernetes workload credentials and talks to the API over this endpoint.
+	Worker WorkerConfig `json:"worker" mapstructure:"worker"`
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
 	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
-	// GitSync holds proxy-level GitHub sync settings (e.g. KMS encryption key).
-	GitSync GitSyncProxyConfig `json:"git_sync" mapstructure:"git_sync"`
-}
-
-// GitSyncEncryptionProxyConfig holds proxy-level AWS KMS settings for GitHub sync.
-// These are set by the operator and are NOT configurable by individual users.
-type GitSyncEncryptionProxyConfig struct {
-	// KMSKeyARN is the ARN of the AWS KMS key used to encrypt sync DEKs.
-	KMSKeyARN string `json:"kms_key_arn" mapstructure:"kms_key_arn"`
-	// AWSRegion is the AWS region where the KMS key resides.
-	AWSRegion string `json:"aws_region" mapstructure:"aws_region"`
-}
-
-// GitSyncGitHubAppConfig holds GitHub App fallback settings for sync token generation.
-// When a user has no personal GitHub token configured, the proxy uses these credentials
-// to generate an installation access token on their behalf.
-// App ID and PEM are read from GITHUB_APP_ID and GITHUB_APP_PEM / GITHUB_APP_PEM_PATH env vars.
-type GitSyncGitHubAppConfig struct {
-	// InstallationID is the GitHub App installation ID to use as a token fallback.
-	// If empty, the GitHub App fallback is disabled.
-	InstallationID string `json:"installation_id" mapstructure:"installation_id"`
-}
-
-// GitSyncProxyConfig holds proxy-level GitHub sync settings.
-type GitSyncProxyConfig struct {
-	// Encryption is the KMS encryption configuration used for all user sync operations.
-	Encryption GitSyncEncryptionProxyConfig `json:"encryption" mapstructure:"encryption"`
-	// GitHubApp is the optional GitHub App fallback for token generation.
-	GitHubApp GitSyncGitHubAppConfig `json:"github_app" mapstructure:"github_app"`
-	// SyncInterval is how often the periodic sync worker runs (e.g. "5m", "1h").
-	// An empty value or "0" disables the periodic worker.
-	SyncInterval string `json:"sync_interval" mapstructure:"sync_interval"`
-	// Namespace overrides the Kubernetes namespace for the leader election lease.
-	// Falls back to schedule_worker.namespace or kubernetes_session.namespace if empty.
-	Namespace string `json:"namespace" mapstructure:"namespace"`
-	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership.
-	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
-	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up.
-	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
-	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions.
-	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
+	// KVStore controls storage for application KV data currently backed by
+	// Kubernetes Secrets and ConfigMaps.
+	KVStore KVStoreConfig `json:"kv_store" mapstructure:"kv_store"`
+	// Usage controls response-level token usage collection.
+	Usage UsageConfig `json:"usage" mapstructure:"usage"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
 type SlackConfig struct {
-	// SigningSecret is the default Slack App signing secret (kept for backward compatibility,
-	// no longer required for Socket Mode operation).
-	// Set via AGENTAPI_SLACK_SIGNING_SECRET environment variable.
-	SigningSecret string `json:"signing_secret" mapstructure:"signing_secret"`
+	// AppToken and BotToken are write-only runtime inputs used by the dedicated
+	// worker to materialize its default Socket Mode credential in the KV store.
+	AppToken string `json:"app_token" mapstructure:"app_token"`
+	BotToken string `json:"bot_token" mapstructure:"bot_token"`
 	// AppTokenSecretName is the K8s Secret name containing the default App-level token (xapp-...).
 	// Used for the default Socket Mode connection.
 	// If empty, falls back to KubernetesSession.SlackBotTokenSecretName.
@@ -661,12 +665,6 @@ func LoadConfig(filename string) (*Config, error) {
 	if config.Auth.GitHub != nil {
 		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
 	}
-	log.Printf("[CONFIG] AWS auth enabled: %v", config.Auth.AWS != nil && config.Auth.AWS.Enabled)
-	if config.Auth.AWS != nil && config.Auth.AWS.Enabled {
-		log.Printf("[CONFIG] AWS region: %s", config.Auth.AWS.Region)
-		log.Printf("[CONFIG] AWS allowed account IDs: %v", config.Auth.AWS.AllowedAccountIDs)
-		log.Printf("[CONFIG] AWS team tag key: %s", config.Auth.AWS.TeamTagKey)
-	}
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
@@ -696,6 +694,7 @@ func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig,
 
 	pools := make([]StockInventoryPoolConfig, 0, len(rawPools))
 	for _, rawPool := range rawPools {
+		name, _ := rawPool["name"].(string)
 		targetCount, err := jsonInt(rawPool, "target_count", "targetCount")
 		if err != nil {
 			return nil, err
@@ -706,6 +705,7 @@ func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig,
 		}
 
 		pools = append(pools, StockInventoryPoolConfig{
+			Name:          name,
 			TargetCount:   targetCount,
 			DockerEnabled: dockerEnabled,
 		})
@@ -769,6 +769,15 @@ func commaSeparatedList(value string) []string {
 
 // initializeConfigStructsFromEnv initializes config structs from environment variables
 func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
+	config.SessionPersistence.Backend = v.GetString("session_persistence.backend")
+	config.SessionPersistence.Path = v.GetString("session_persistence.path")
+	config.SessionPersistence.SuspendAfter = v.GetString("session_persistence.suspend_after")
+	if bucket := v.GetString("session_persistence.s3.bucket"); bucket != "" {
+		config.SessionPersistence.S3 = &MemoryS3Config{
+			Bucket: bucket, Region: v.GetString("session_persistence.s3.region"),
+			Prefix: v.GetString("session_persistence.s3.prefix"), Endpoint: v.GetString("session_persistence.s3.endpoint"),
+		}
+	}
 	// Initialize Auth.Static if environment variables are set
 	if config.Auth.Static == nil && (v.GetBool("auth.static.enabled") || v.GetString("auth.static.header_name") != "" || v.GetString("auth.static.keys_file") != "") {
 		config.Auth.Static = &StaticAuthConfig{
@@ -779,6 +788,14 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		}
 		log.Printf("[CONFIG] Initialized Static auth config from environment variables")
 	}
+	if config.Auth.BootstrapAdmin == nil && (v.GetBool("auth.bootstrap_admin.enabled") || v.GetString("auth.bootstrap_admin.token") != "") {
+		config.Auth.BootstrapAdmin = &BootstrapAdminAuthConfig{
+			Enabled:  v.GetBool("auth.bootstrap_admin.enabled"),
+			UserID:   v.GetString("auth.bootstrap_admin.user_id"),
+			Username: v.GetString("auth.bootstrap_admin.username"),
+			Token:    v.GetString("auth.bootstrap_admin.token"),
+		}
+	}
 
 	// Initialize Auth.GitHub if environment variables are set
 	if config.Auth.GitHub == nil && (v.GetBool("auth.github.enabled") || v.GetString("auth.github.base_url") != "" || v.GetString("auth.github.token_header") != "") {
@@ -787,8 +804,9 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			BaseURL:     v.GetString("auth.github.base_url"),
 			TokenHeader: v.GetString("auth.github.token_header"),
 			UserMapping: GitHubUserMapping{
-				DefaultRole:        v.GetString("auth.github.user_mapping.default_role"),
-				DefaultPermissions: v.GetStringSlice("auth.github.user_mapping.default_permissions"),
+				DefaultRole:           v.GetString("auth.github.user_mapping.default_role"),
+				DefaultPermissions:    v.GetStringSlice("auth.github.user_mapping.default_permissions"),
+				AllowUsersWithoutTeam: v.GetBool("auth.github.user_mapping.allow_users_without_team"),
 			},
 		}
 		log.Printf("[CONFIG] Initialized GitHub auth config from environment variables")
@@ -811,38 +829,6 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			log.Printf("[CONFIG] OAuth ClientID from env: %v", clientID != "")
 			log.Printf("[CONFIG] OAuth ClientSecret from env: %v", clientSecret != "")
 		}
-	}
-
-	// Initialize Auth.AWS if environment variables are set
-	if config.Auth.AWS == nil && (v.GetBool("auth.aws.enabled") || v.GetString("auth.aws.region") != "" || len(v.GetStringSlice("auth.aws.allowed_account_ids")) > 0) {
-		config.Auth.AWS = &AWSAuthConfig{
-			Enabled:           v.GetBool("auth.aws.enabled"),
-			Region:            v.GetString("auth.aws.region"),
-			AllowedAccountIDs: v.GetStringSlice("auth.aws.allowed_account_ids"),
-			TeamTagKey:        v.GetString("auth.aws.team_tag_key"),
-			CacheTTL:          v.GetString("auth.aws.cache_ttl"),
-			UserMapping: AWSUserMapping{
-				DefaultRole:        v.GetString("auth.aws.user_mapping.default_role"),
-				DefaultPermissions: v.GetStringSlice("auth.aws.user_mapping.default_permissions"),
-			},
-		}
-		log.Printf("[CONFIG] Initialized AWS auth config from environment variables")
-	}
-
-	// Override GitSync fields from env vars (viper Unmarshal may miss deeply nested env-only keys)
-	kmsKeyARN := v.GetString("git_sync.encryption.kms_key_arn")
-	awsRegion := v.GetString("git_sync.encryption.aws_region")
-	if kmsKeyARN != "" {
-		config.GitSync.Encryption.KMSKeyARN = kmsKeyARN
-	}
-	if awsRegion != "" {
-		config.GitSync.Encryption.AWSRegion = awsRegion
-	}
-	if installationID := v.GetString("git_sync.github_app.installation_id"); installationID != "" {
-		config.GitSync.GitHubApp.InstallationID = installationID
-	}
-	if syncInterval := v.GetString("git_sync.sync_interval"); syncInterval != "" {
-		config.GitSync.SyncInterval = syncInterval
 	}
 
 	if namespace := os.Getenv("AGENTAPI_K8S_SESSION_NAMESPACE"); namespace != "" {
@@ -986,6 +972,9 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		if v.IsSet("auth.github.user_mapping.default_permissions") {
 			config.Auth.GitHub.UserMapping.DefaultPermissions = v.GetStringSlice("auth.github.user_mapping.default_permissions")
 		}
+		if v.IsSet("auth.github.user_mapping.allow_users_without_team") {
+			config.Auth.GitHub.UserMapping.AllowUsersWithoutTeam = v.GetBool("auth.github.user_mapping.allow_users_without_team")
+		}
 
 		// Override OAuth settings if already exists
 		if config.Auth.GitHub.OAuth != nil {
@@ -1011,11 +1000,16 @@ func bindEnvVars(v *viper.Viper) {
 	// Bind nested configuration keys to environment variables
 	// Note: BindEnv errors are generally not critical and can be ignored
 	// as they typically occur only when the key is already bound
+	_ = v.BindEnv("binary_path", "CCPLANT_BINARY_PATH")
 
 	// Auth configuration
 	_ = v.BindEnv("auth.static.enabled")
 	_ = v.BindEnv("auth.static.header_name")
 	_ = v.BindEnv("auth.static.keys_file")
+	_ = v.BindEnv("auth.bootstrap_admin.enabled")
+	_ = v.BindEnv("auth.bootstrap_admin.user_id")
+	_ = v.BindEnv("auth.bootstrap_admin.username")
+	_ = v.BindEnv("auth.bootstrap_admin.token")
 
 	// GitHub auth configuration
 	_ = v.BindEnv("auth.github.enabled")
@@ -1023,6 +1017,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.github.token_header")
 	_ = v.BindEnv("auth.github.user_mapping.default_role")
 	_ = v.BindEnv("auth.github.user_mapping.default_permissions")
+	_ = v.BindEnv("auth.github.user_mapping.allow_users_without_team")
 
 	// GitHub OAuth configuration
 	_ = v.BindEnv("auth.github.oauth.client_id")
@@ -1030,17 +1025,22 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.github.oauth.scope")
 	_ = v.BindEnv("auth.github.oauth.base_url")
 
-	// AWS auth configuration
-	_ = v.BindEnv("auth.aws.enabled")
-	_ = v.BindEnv("auth.aws.region")
-	_ = v.BindEnv("auth.aws.allowed_account_ids")
-	_ = v.BindEnv("auth.aws.team_tag_key")
-	_ = v.BindEnv("auth.aws.cache_ttl")
-	_ = v.BindEnv("auth.aws.user_mapping.default_role")
-	_ = v.BindEnv("auth.aws.user_mapping.default_permissions")
-
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
+	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
+	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
+	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
+	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
+	_ = v.BindEnv("kv_store.primary.database_url", "AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL")
+	_ = v.BindEnv("kv_store.primary.auth_token", "AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.secondary.backend", "AGENTAPI_KV_STORE_SECONDARY_BACKEND")
+	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
+	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
+	_ = v.BindEnv("usage.enabled", "AGENTAPI_USAGE_ENABLED")
+	_ = v.BindEnv("usage.database_url", "AGENTAPI_USAGE_DATABASE_URL")
+	_ = v.BindEnv("usage.auth_token", "AGENTAPI_USAGE_AUTH_TOKEN")
 
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
@@ -1081,10 +1081,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.provisioner_proxy_url", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
-	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
-	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
-	_ = v.BindEnv("kubernetes_session.sandbox_init_image", "AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE")
-	_ = v.BindEnv("kubernetes_session.sandbox_iptables_configmap_name", "AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME")
+	_ = v.BindEnv("kubernetes_session.provisioner_token", "AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN")
 	_ = v.BindEnv("kubernetes_session.network_filter_image", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT")
@@ -1105,17 +1102,11 @@ func bindEnvVars(v *viper.Viper) {
 
 	// OpenTelemetry Collector configuration
 	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
-	_ = v.BindEnv("kubernetes_session.otel_collector_image", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE")
 	_ = v.BindEnv("kubernetes_session.otel_collector_scrape_interval", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL")
 	_ = v.BindEnv("kubernetes_session.otel_collector_claude_code_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT")
 	_ = v.BindEnv("kubernetes_session.otel_collector_exporter_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_REQUEST")
-	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_memory_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST")
-	_ = v.BindEnv("kubernetes_session.otel_collector_memory_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT")
 
 	// Slack Integration configuration
-	_ = v.BindEnv("kubernetes_session.slack_integration_image", "AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE")
 	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_name", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_key", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY")
 
@@ -1148,29 +1139,36 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("stock_inventory_worker.retry_period", "AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD")
 
-	// Memory summarizer worker configuration
-	_ = v.BindEnv("memory_summarizer_worker.enabled", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_ENABLED")
-	_ = v.BindEnv("memory_summarizer_worker.check_interval", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_CHECK_INTERVAL")
-	_ = v.BindEnv("memory_summarizer_worker.lease_duration", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_LEASE_DURATION")
-	_ = v.BindEnv("memory_summarizer_worker.renew_deadline", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_RENEW_DEADLINE")
-	_ = v.BindEnv("memory_summarizer_worker.retry_period", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_RETRY_PERIOD")
-
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
 
 	// Slack configuration
-	_ = v.BindEnv("slack.signing_secret", "AGENTAPI_SLACK_SIGNING_SECRET")
 	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
+	_ = v.BindEnv("slack.app_token", "AGENTAPI_SLACK_APP_TOKEN")
+	_ = v.BindEnv("slack.bot_token", "AGENTAPI_SLACK_BOT_TOKEN")
 	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
 
 	// Session manager configuration
-	_ = v.BindEnv("session_manager.enabled", "SESSION_MANAGER_ENABLED")
-	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
-	_ = v.BindEnv("session_manager.upstream_url", "SESSION_MANAGER_UPSTREAM_URL")
-	_ = v.BindEnv("session_manager.connection_token", "SESSION_MANAGER_CONNECTION_TOKEN")
-	_ = v.BindEnv("session_manager.public_url", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.enabled", "AGENTAPI_SESSION_MANAGER_ENABLED", "SESSION_MANAGER_ENABLED")
+	_ = v.BindEnv("session_manager.hmac_secret", "AGENTAPI_SESSION_MANAGER_HMAC_SECRET", "SESSION_MANAGER_HMAC_SECRET")
+	_ = v.BindEnv("session_manager.upstream_url", "AGENTAPI_SESSION_MANAGER_UPSTREAM_URL", "SESSION_MANAGER_UPSTREAM_URL")
+	_ = v.BindEnv("session_manager.connection_token", "AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.id", "AGENTAPI_SESSION_MANAGER_ID", "SESSION_MANAGER_ID")
+	_ = v.BindEnv("session_manager.runner_pool", "AGENTAPI_SESSION_MANAGER_RUNNER_POOL", "SESSION_MANAGER_RUNNER_POOL")
+	_ = v.BindEnv("session_manager.public_url", "AGENTAPI_SESSION_MANAGER_PUBLIC_URL", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
+	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
+	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
+	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
+	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
+	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")
+
+	// Background-worker control plane. These values are deliberately not part
+	// of kubernetes_session: the worker must never receive a provisioner token.
+	_ = v.BindEnv("worker.control_api_url", "AGENTAPI_WORKER_CONTROL_API_URL", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
+	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
@@ -1178,6 +1176,13 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("memory.s3.region", "AGENTAPI_MEMORY_S3_REGION")
 	_ = v.BindEnv("memory.s3.prefix", "AGENTAPI_MEMORY_S3_PREFIX")
 	_ = v.BindEnv("memory.s3.endpoint", "AGENTAPI_MEMORY_S3_ENDPOINT")
+	_ = v.BindEnv("session_persistence.backend", "AGENTAPI_SESSION_PERSISTENCE_BACKEND")
+	_ = v.BindEnv("session_persistence.path", "AGENTAPI_SESSION_PERSISTENCE_PATH")
+	_ = v.BindEnv("session_persistence.suspend_after", "AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER")
+	_ = v.BindEnv("session_persistence.s3.bucket", "AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET")
+	_ = v.BindEnv("session_persistence.s3.region", "AGENTAPI_SESSION_PERSISTENCE_S3_REGION")
+	_ = v.BindEnv("session_persistence.s3.prefix", "AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX")
+	_ = v.BindEnv("session_persistence.s3.endpoint", "AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT")
 
 	// Asset backend configuration
 	_ = v.BindEnv("asset.backend", "AGENTAPI_ASSET_BACKEND")
@@ -1201,21 +1206,16 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
 	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
 
-	// GitHub sync proxy configuration
-	_ = v.BindEnv("git_sync.sync_interval", "AGENTAPI_GIT_SYNC_SYNC_INTERVAL")
-	_ = v.BindEnv("git_sync.encryption.kms_key_arn", "AGENTAPI_GIT_SYNC_ENCRYPTION_KMS_KEY_ARN")
-	_ = v.BindEnv("git_sync.encryption.aws_region", "AGENTAPI_GIT_SYNC_ENCRYPTION_AWS_REGION")
-	_ = v.BindEnv("git_sync.github_app.installation_id", "AGENTAPI_GIT_SYNC_GITHUB_APP_INSTALLATION_ID")
-	_ = v.BindEnv("git_sync.namespace", "AGENTAPI_GIT_SYNC_NAMESPACE")
-	_ = v.BindEnv("git_sync.lease_duration", "AGENTAPI_GIT_SYNC_LEASE_DURATION")
-	_ = v.BindEnv("git_sync.renew_deadline", "AGENTAPI_GIT_SYNC_RENEW_DEADLINE")
-	_ = v.BindEnv("git_sync.retry_period", "AGENTAPI_GIT_SYNC_RETRY_PERIOD")
-
 }
 
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("binary_path", "ccplant")
 	// Auth defaults
+	v.SetDefault("auth.bootstrap_admin.enabled", false)
+	v.SetDefault("auth.bootstrap_admin.user_id", "bootstrap-admin")
+	v.SetDefault("auth.bootstrap_admin.username", "admin")
+	v.SetDefault("auth.bootstrap_admin.token", "")
 	v.SetDefault("auth.static.enabled", false)
 	v.SetDefault("auth.static.header_name", "X-API-Key")
 	v.SetDefault("auth.github.enabled", false)
@@ -1232,6 +1232,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.aws.allowed_account_ids", []string{})
 	v.SetDefault("auth.aws.team_tag_key", "Team")
 	v.SetDefault("auth.aws.cache_ttl", "1h")
+	v.SetDefault("usage.enabled", false)
 
 	// Role-based environment files defaults
 	v.SetDefault("role_env_files.enabled", false)
@@ -1242,7 +1243,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.namespace", "")
 	v.SetDefault("kubernetes_session.image", "")
 	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
-	v.SetDefault("kubernetes_session.service_account", "agentapi-proxy")
+	v.SetDefault("kubernetes_session.service_account", "agentapi-proxy-session")
 	v.SetDefault("kubernetes_session.base_port", 9000)
 	v.SetDefault("kubernetes_session.cpu_request", "500m")
 	v.SetDefault("kubernetes_session.cpu_limit", "2")
@@ -1254,11 +1255,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pod_start_timeout", 120)
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 	v.SetDefault("kubernetes_session.provisioner_proxy_url", "")
-	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
-	v.SetDefault("kubernetes_session.init_container_image", "")
-	v.SetDefault("kubernetes_session.sandbox_init_image", "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a")
-	v.SetDefault("kubernetes_session.sandbox_iptables_configmap_name", "")
-	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.2")
+	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.3")
 	v.SetDefault("kubernetes_session.network_filter_cpu_request", "250m")
 	v.SetDefault("kubernetes_session.network_filter_cpu_limit", "1000m")
 	v.SetDefault("kubernetes_session.network_filter_memory_request", "256Mi")
@@ -1268,6 +1265,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.network_filter_init_memory_request", "32Mi")
 	v.SetDefault("kubernetes_session.network_filter_init_memory_limit", "64Mi")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
+	v.SetDefault("worker.control_api_url", "")
+	v.SetDefault("worker.control_api_token", "")
+	v.SetDefault("session_manager.api_url", "")
+	v.SetDefault("session_manager.api_token", "")
+	v.SetDefault("session_manager.internal_api_token", "")
+	v.SetDefault("session_manager.allocation.lease_duration", "15s")
+	v.SetDefault("session_manager.allocation.renew_deadline", "10s")
+	v.SetDefault("session_manager.allocation.retry_period", "2s")
 
 	// Settings base secret default (single base Secret shared by all sessions,
 	// merged with team/user settings at session settings generation time)
@@ -1301,13 +1306,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
 	v.SetDefault("stock_inventory_worker.retry_period", "2s")
 
-	// Memory summarizer worker defaults
-	v.SetDefault("memory_summarizer_worker.enabled", false)
-	v.SetDefault("memory_summarizer_worker.check_interval", "5m")
-	v.SetDefault("memory_summarizer_worker.lease_duration", "15s")
-	v.SetDefault("memory_summarizer_worker.renew_deadline", "10s")
-	v.SetDefault("memory_summarizer_worker.retry_period", "2s")
-
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
 	v.SetDefault("webhook.github_enterprise_host", "")
@@ -1335,6 +1333,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
 	v.SetDefault("memory.s3.region", "")
 	v.SetDefault("memory.s3.endpoint", "")
+	v.SetDefault("session_persistence.backend", "")
+	v.SetDefault("session_persistence.path", "/var/lib/agentapi-session-state")
+	v.SetDefault("session_persistence.suspend_after", "1h")
+	v.SetDefault("session_persistence.s3.prefix", "agentapi-sessions/")
 	v.SetDefault("memory.external.url", "")
 	v.SetDefault("memory.external.admin_token", "")
 
@@ -1348,11 +1350,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Slack defaults
 	v.SetDefault("slack.dry_run", false)
-
-	// GitHub sync worker leader election defaults
-	v.SetDefault("git_sync.lease_duration", "15s")
-	v.SetDefault("git_sync.renew_deadline", "10s")
-	v.SetDefault("git_sync.retry_period", "2s")
 
 	// Redis defaults (empty addr = disabled)
 	v.SetDefault("redis.addr", "")
@@ -1371,6 +1368,14 @@ func applyConfigDefaults(config *Config) {
 	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
 		config.Auth.Static.HeaderName = "X-API-Key"
 	}
+	if config.Auth.BootstrapAdmin != nil {
+		if config.Auth.BootstrapAdmin.UserID == "" {
+			config.Auth.BootstrapAdmin.UserID = "bootstrap-admin"
+		}
+		if config.Auth.BootstrapAdmin.Username == "" {
+			config.Auth.BootstrapAdmin.Username = "admin"
+		}
+	}
 	if config.Auth.GitHub != nil {
 		if config.Auth.GitHub.BaseURL == "" {
 			config.Auth.GitHub.BaseURL = "https://api.github.com"
@@ -1380,17 +1385,6 @@ func applyConfigDefaults(config *Config) {
 		}
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
 			config.Auth.GitHub.OAuth.Scope = "read:user read:org project"
-		}
-	}
-	if config.Auth.AWS != nil {
-		if config.Auth.AWS.Region == "" {
-			config.Auth.AWS.Region = "ap-northeast-1"
-		}
-		if config.Auth.AWS.TeamTagKey == "" {
-			config.Auth.AWS.TeamTagKey = "Team"
-		}
-		if config.Auth.AWS.CacheTTL == "" {
-			config.Auth.AWS.CacheTTL = "1h"
 		}
 	}
 	if config.Asset.Backend == "" {
@@ -1540,15 +1534,20 @@ func DefaultConfig() *Config {
 				HeaderName: "X-API-Key",
 				APIKeys:    []APIKey{},
 			},
+			BootstrapAdmin: &BootstrapAdminAuthConfig{
+				Enabled:  false,
+				UserID:   "bootstrap-admin",
+				Username: "admin",
+			},
 		},
 		StockInventoryWorker: StockInventoryWorkerConfig{
-			Enabled:        false,
-			CheckInterval:  "30s",
-			TargetCount:    2,
-			DockerEnabled:  false,
-			LeaseDuration:  "15s",
-			RenewDeadline:  "10s",
-			RetryPeriod:    "2s",
+			Enabled:       false,
+			CheckInterval: "30s",
+			TargetCount:   2,
+			DockerEnabled: false,
+			LeaseDuration: "15s",
+			RenewDeadline: "10s",
+			RetryPeriod:   "2s",
 		},
 		Asset: AssetConfig{
 			Backend:     "nginx",
@@ -1711,9 +1710,9 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 // K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
 type K8sSessionConfigOverride struct {
 	KubernetesSession *struct {
-		NodeSelector          map[string]string `json:"node_selector,omitempty" yaml:"node_selector"`
+		NodeSelector map[string]string      `json:"node_selector,omitempty" yaml:"node_selector"`
 		Affinity     map[string]interface{} `json:"affinity,omitempty" yaml:"affinity"`
-		Tolerations           []Toleration      `json:"tolerations,omitempty" yaml:"tolerations"`
+		Tolerations  []Toleration           `json:"tolerations,omitempty" yaml:"tolerations"`
 	} `json:"kubernetes_session,omitempty" yaml:"kubernetes_session"`
 }
 

@@ -29,6 +29,7 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 			name: "valid YAML auth config",
 			fileContent: `github:
   user_mapping:
+    allow_users_without_team: true
     default_role: "user"
     default_permissions:
       - "read"
@@ -52,6 +53,10 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 				}
 				if c.Auth.GitHub.UserMapping.DefaultRole != "user" {
 					t.Logf("Expected default role 'user', got '%s'", c.Auth.GitHub.UserMapping.DefaultRole)
+					return false
+				}
+				if !c.Auth.GitHub.UserMapping.AllowUsersWithoutTeam {
+					t.Logf("Expected users without teams to be allowed")
 					return false
 				}
 				if len(c.Auth.GitHub.UserMapping.DefaultPermissions) != 2 {
@@ -94,6 +99,7 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 			expectError: false,
 			validate: func(c *Config) bool {
 				return c.Auth.GitHub != nil &&
+					!c.Auth.GitHub.UserMapping.AllowUsersWithoutTeam &&
 					c.Auth.GitHub.UserMapping.DefaultRole == "viewer" &&
 					len(c.Auth.GitHub.UserMapping.DefaultPermissions) == 1 &&
 					c.Auth.GitHub.UserMapping.DefaultPermissions[0] == "read" &&

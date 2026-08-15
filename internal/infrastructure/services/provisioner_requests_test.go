@@ -12,6 +12,23 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
 
+func TestSessionControlTokenIsBoundToSession(t *testing.T) {
+	const master = "backend-master-token"
+	token := deriveSessionControlToken(master, "session-a")
+	if token == "" {
+		t.Fatal("derived token is empty")
+	}
+	if !validateSessionControlToken(master, "session-a", token) {
+		t.Fatal("token should validate for its session")
+	}
+	if validateSessionControlToken(master, "session-b", token) {
+		t.Fatal("token must not validate for a different session")
+	}
+	if validateSessionControlToken("different-master", "session-a", token) {
+		t.Fatal("token must not validate with a different master key")
+	}
+}
+
 func TestEnsureProvisionerTokenCreatesSecret(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.KubernetesSession.Namespace = "test-ns"

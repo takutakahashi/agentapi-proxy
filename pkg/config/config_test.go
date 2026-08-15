@@ -45,6 +45,17 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestBinaryPathConfig(t *testing.T) {
+	t.Setenv("CCPLANT_BINARY_PATH", "/opt/ccplant/bin/ccplant")
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if got, want := loadedConfig.BinaryPath, "/opt/ccplant/bin/ccplant"; got != want {
+		t.Fatalf("BinaryPath = %q, want %q", got, want)
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 
@@ -113,6 +124,22 @@ func TestLoadConfig(t *testing.T) {
 			t.Errorf("Auth.GitHub.OAuth.Scope should be 'read:user read:org project', got '%s'", loadedConfig.Auth.GitHub.OAuth.Scope)
 		}
 	}
+}
+
+func TestLoadConfigKVStoreFromEnvironment(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_KV_STORE_BACKEND", "libsql")
+	t.Setenv("AGENTAPI_KV_STORE_DATABASE_URL", "https://example.turso.io")
+	t.Setenv("AGENTAPI_KV_STORE_AUTH_TOKEN", "secret-token")
+
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	assert.Equal(t, "libsql", loadedConfig.KVStore.Backend)
+	assert.Equal(t, "https://example.turso.io", loadedConfig.KVStore.DatabaseURL)
+	assert.Equal(t, "secret-token", loadedConfig.KVStore.AuthToken)
 }
 
 func TestLoadConfigNonexistentFile(t *testing.T) {

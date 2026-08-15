@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -15,7 +15,7 @@ import (
 // real-time message update notifications via long polling.
 // KubernetesSessionManager implements this interface.
 type ProxyMessageWatcher interface {
-	SubscribeMessageEvents(sessionID string) (<-chan services.SessionMessageEvent, func())
+	SubscribeMessageEvents(sessionID string) (<-chan portrepos.SessionMessageEvent, func())
 }
 
 // WaitSessionMessages handles GET /sessions/:sessionId/messages/wait.

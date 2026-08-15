@@ -93,6 +93,6 @@ func (r *recordingStockRepo) CountStockSessions(_ context.Context, dind bool) (i
 	return r.count, nil
 }
 
-func (r *recordingStockRepo) PurgeStockSessions(context.Context) error {
+func (r *recordingStockRepo) PurgeStaleStockSessions(context.Context) error {
 	return nil
 }

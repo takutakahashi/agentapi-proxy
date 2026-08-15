@@ -6,6 +6,7 @@
       "base_url": "https://api.github.com",
       "token_header": "Authorization",
       "user_mapping": {
+        "allow_users_without_team": false,
         "default_role": "guest",
         "default_permissions": ["read"],
         "team_role_mapping": {

@@ -67,6 +67,122 @@ func TestAllocatorWorkerPointsOneshotDeletionAtUpstreamProxy(t *testing.T) {
 	}
 }
 
+func TestAllocatorWorkerInjectsDirectParentRuntime(t *testing.T) {
+	worker := newAllocatorWorkerWithClient(&fakeAllocatorSessionManager{}, &fakeExternalAllocatorClient{}, "https://parent.example", "")
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)}}
+	request := &entities.RunServerRequest{}
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "public-session", ManagerID: "manager-a", ProvisionSettings: settings, Request: request,
+		Runtime: &sessionallocation.RuntimeBootstrap{Token: "runtime-secret", Generation: 2},
+	})
+
+	if settings.ParentRuntime == nil {
+		t.Fatal("parent runtime was not injected into provision settings")
+	}
+	if got := settings.ParentRuntime.Endpoint; got != "https://parent.example" {
+		t.Fatalf("endpoint=%q", got)
+	}
+	if settings.ParentRuntime.SessionID != "public-session" || settings.ParentRuntime.ManagerID != "manager-a" || settings.ParentRuntime.Generation != 2 {
+		t.Fatalf("unexpected runtime config: %#v", settings.ParentRuntime)
+	}
+	if request.ParentRuntime != settings.ParentRuntime {
+		t.Fatal("request did not receive the same runtime bootstrap")
+	}
+}
+
+func TestAllocatorWorkerAppliesParentRuntimeProfileBeforeCreatingSession(t *testing.T) {
+	client := &fakeExternalAllocatorClient{}
+	manager := &fakeAllocatorSessionManager{}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://esm.example")
+	profile := &sessionsettings.RuntimeProfile{Version: 1, Scia: sessionsettings.SciaRuntimeProfile{Enabled: true, SessionSidecarImage: "scia:parent"}}
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "parent-session",
+		ProvisionSettings: &sessionsettings.SessionSettings{
+			Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+		},
+		RuntimeProfile: profile,
+	})
+
+	if manager.appliedProfile != profile {
+		t.Fatalf("applied profile = %#v, want %#v", manager.appliedProfile, profile)
+	}
+	if manager.created != 1 {
+		t.Fatalf("created = %d, want 1", manager.created)
+	}
+}
+
+func TestAllocatorWorkerCanIgnoreParentRuntimeProfile(t *testing.T) {
+	client := &fakeExternalAllocatorClient{}
+	manager := &fakeAllocatorSessionManager{profileErr: errors.New("must not be called")}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://native.example")
+	worker.applyRuntimeProfile = false
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "parent-session",
+		ProvisionSettings: &sessionsettings.SessionSettings{
+			Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+		},
+		RuntimeProfile: &sessionsettings.RuntimeProfile{Version: 1},
+	})
+
+	if manager.appliedProfile != nil {
+		t.Fatalf("applied profile = %#v, want nil", manager.appliedProfile)
+	}
+	if manager.created != 1 {
+		t.Fatalf("created = %d, want 1", manager.created)
+	}
+}
+
+func TestAllocatorWorkerSynchronizesChangedRuntimeProfileRevision(t *testing.T) {
+	profile := &sessionsettings.RuntimeProfile{Version: 1}
+	client := &fakeRuntimeProfileClient{
+		fakeExternalAllocatorClient: fakeExternalAllocatorClient{},
+		revision:                    "revision-1",
+		snapshot: &sessionallocation.RuntimeProfileSnapshot{
+			Revision: "revision-1",
+			Profile:  profile,
+		},
+	}
+	manager := &fakeAllocatorSessionManager{}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://esm.example")
+
+	worker.syncRuntimeProfile(context.Background(), false)
+	worker.syncRuntimeProfile(context.Background(), false)
+	if client.profileGets != 1 {
+		t.Fatalf("profile gets = %d, want 1", client.profileGets)
+	}
+	if manager.appliedProfile != profile || worker.appliedProfileRevision != "revision-1" {
+		t.Fatalf("profile synchronization failed: manager=%#v revision=%q", manager.appliedProfile, worker.appliedProfileRevision)
+	}
+
+	worker.syncRuntimeProfile(context.Background(), true)
+	if client.profileGets != 2 {
+		t.Fatalf("profile gets after reconnect = %d, want 2", client.profileGets)
+	}
+}
+
+func TestAllocatorWorkerRejectsAllocationWhenRuntimeProfileCannotBeApplied(t *testing.T) {
+	client := &fakeExternalAllocatorClient{}
+	manager := &fakeAllocatorSessionManager{profileErr: errors.New("rbac denied")}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://esm.example")
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "parent-session",
+		ProvisionSettings: &sessionsettings.SessionSettings{
+			Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+		},
+		RuntimeProfile: &sessionsettings.RuntimeProfile{Version: 1},
+	})
+
+	if manager.created != 0 {
+		t.Fatalf("created = %d, want 0", manager.created)
+	}
+	if len(client.completed) != 1 || client.completed[0].result.Status != sessionallocation.StatusError {
+		t.Fatalf("completion = %#v", client.completed)
+	}
+}
+
 func TestAllocatorWorkerLeavesRegularSessionEndpointUnchanged(t *testing.T) {
 	worker := newAllocatorWorkerWithClient(&fakeAllocatorSessionManager{}, &fakeExternalAllocatorClient{}, "https://proxy.example", "https://esm.example")
 	settings := &sessionsettings.SessionSettings{
@@ -149,6 +265,20 @@ type fakeExternalAllocatorClient struct {
 	completed []completedAllocation
 }
 
+type fakeRuntimeProfileClient struct {
+	fakeExternalAllocatorClient
+	revision    string
+	snapshot    *sessionallocation.RuntimeProfileSnapshot
+	profileGets int
+}
+
+func (c *fakeRuntimeProfileClient) RuntimeProfileRevision() string { return c.revision }
+
+func (c *fakeRuntimeProfileClient) GetRuntimeProfile(context.Context) (*sessionallocation.RuntimeProfileSnapshot, error) {
+	c.profileGets++
+	return c.snapshot, nil
+}
+
 type completedAllocation struct {
 	sessionID string
 	result    sessionallocation.AllocationResult
@@ -164,10 +294,17 @@ func (c *fakeExternalAllocatorClient) CompleteExternal(_ context.Context, sessio
 }
 
 type fakeAllocatorSessionManager struct {
-	created   int
-	createErr error
-	lastID    string
-	lastReq   *entities.RunServerRequest
+	created        int
+	createErr      error
+	profileErr     error
+	appliedProfile *sessionsettings.RuntimeProfile
+	lastID         string
+	lastReq        *entities.RunServerRequest
+}
+
+func (m *fakeAllocatorSessionManager) ApplyRuntimeProfile(_ context.Context, profile *sessionsettings.RuntimeProfile) error {
+	m.appliedProfile = profile
+	return m.profileErr
 }
 
 func (m *fakeAllocatorSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {

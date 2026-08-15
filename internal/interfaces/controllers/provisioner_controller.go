@@ -2,8 +2,14 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +19,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type ProvisionerController struct {
@@ -20,17 +27,183 @@ type ProvisionerController struct {
 	allocationQueue  sessionallocation.Queue
 	settingsRepo     repositories.SettingsRepository
 	sessionRouteRepo repositories.SessionRouteRepository
+	stateStore       services.SessionStateStore
 }
 
 type ProvisionerManager interface {
 	ValidateProvisionerToken(token string) bool
+	ValidateSessionControlToken(sessionID, token string) bool
 	ConnectProvisioner(ctx context.Context, req services.ProvisionerConnectRequest) error
 	ClaimProvisionRequest(ctx context.Context, sessionID, podName string) (*services.ProvisionRequest, bool, error)
 	UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req services.ProvisionRequestStatusUpdate) error
 }
 
-func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
-	return &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+type sessionSuspendScheduler interface {
+	ScheduleSessionSuspend(ctx context.Context, sessionID string) error
+}
+
+type externalRuntimeProfileProvider interface {
+	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+}
+
+func (pc *ProvisionerController) externalRuntimeProfileSnapshot() (*sessionallocation.RuntimeProfileSnapshot, error) {
+	provider, ok := pc.allocationQueue.(externalRuntimeProfileProvider)
+	if !ok {
+		return nil, errors.New("runtime profile is unavailable")
+	}
+	profile := provider.ExternalRuntimeProfile()
+	data, err := json.Marshal(profile)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	return &sessionallocation.RuntimeProfileSnapshot{Revision: hex.EncodeToString(sum[:]), Profile: profile}, nil
+}
+
+func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository, stateStore ...services.SessionStateStore) *ProvisionerController {
+	pc := &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+	if len(stateStore) > 0 {
+		pc.stateStore = stateStore[0]
+	}
+	return pc
+}
+
+const maxSessionStateBytes = 1 << 30
+
+type multipartStartResponse struct {
+	UploadID string `json:"upload_id"`
+	PartSize int64  `json:"part_size"`
+}
+
+func (pc *ProvisionerController) multipartStore(c echo.Context) (services.MultipartSessionStateStore, error) {
+	if !pc.authorized(c) {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	store, ok := pc.stateStore.(services.MultipartSessionStateStore)
+	if !ok {
+		return nil, echo.NewHTTPError(http.StatusNotImplemented, "direct transfer is unavailable")
+	}
+	return store, nil
+}
+
+func (pc *ProvisionerController) BeginSessionStateUpload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	uploadID, partSize, err := store.BeginMultipart(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.JSON(http.StatusOK, multipartStartResponse{UploadID: uploadID, PartSize: partSize})
+}
+
+func (pc *ProvisionerController) PresignSessionStatePart(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	number, err := strconv.ParseInt(c.Param("partNumber"), 10, 32)
+	if err != nil || number < 1 || number > maxSessionStateBytes/(8<<20) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid part number"})
+	}
+	url, err := store.PresignPart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId"), int32(number))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"url": url})
+}
+
+func (pc *ProvisionerController) CompleteSessionStateUpload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Parts []services.MultipartPart `json:"parts"`
+	}
+	if err := c.Bind(&req); err != nil || len(req.Parts) == 0 || len(req.Parts) > maxSessionStateBytes/(8<<20) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "parts are required"})
+	}
+	if err := store.CompleteMultipart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId"), req.Parts); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) AbortSessionStateUpload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	if err := store.AbortMultipart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId")); err != nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) PresignSessionStateDownload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	url, err := store.PresignDownload(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"url": url})
+}
+
+func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
+	}
+	body := http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes)
+	if err := pc.stateStore.Save(c.Request().Context(), c.Param("sessionId"), body); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+		}
+		log.Printf("[SESSION_STATE] Backup skipped because persistence backend is unavailable: %v", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	scheduler, ok := pc.manager.(sessionSuspendScheduler)
+	if !ok || pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence suspend is unavailable"})
+	}
+	if err := scheduler.ScheduleSessionSuspend(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
+	}
+	body, err := pc.stateStore.Load(c.Request().Context(), c.Param("sessionId"))
+	if os.IsNotExist(err) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err != nil {
+		log.Printf("[SESSION_STATE] Restore skipped because persistence backend is unavailable: %v", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	defer func() { _ = body.Close() }()
+	return c.Stream(http.StatusOK, "application/zstd", body)
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {
@@ -150,6 +323,12 @@ func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context
 	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
+	if snapshot, snapshotErr := pc.externalRuntimeProfileSnapshot(); snapshotErr == nil {
+		c.Response().Header().Set("X-AgentAPI-Runtime-Profile-Revision", snapshot.Revision)
+		if _, present := c.QueryParams()["profile_revision"]; present && c.QueryParam("profile_revision") != snapshot.Revision {
+			return c.NoContent(http.StatusNoContent)
+		}
+	}
 	wait := parseWait(c.QueryParam("wait"))
 	req, found, err := pc.allocationQueue.NextExternalSessionAllocation(c.Request().Context(), managerID, wait)
 	if err != nil {
@@ -162,6 +341,17 @@ func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context
 		req = allocationMetadata(req)
 	}
 	return c.JSON(http.StatusOK, req)
+}
+
+func (pc *ProvisionerController) GetExternalSessionManagerRuntimeProfile(c echo.Context) error {
+	if _, _, ok := pc.authorizedExternalManager(c); !ok {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	snapshot, err := pc.externalRuntimeProfileSnapshot()
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, snapshot)
 }
 
 func allocationMetadata(req *sessionallocation.AllocationRequest) *sessionallocation.AllocationRequest {
@@ -185,7 +375,7 @@ func allocationMetadata(req *sessionallocation.AllocationRequest) *sessionalloca
 }
 
 func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Context) error {
-	_, managerSecret, ok := pc.authorizedExternalManager(c)
+	managerID, managerSecret, ok := pc.authorizedExternalManager(c)
 	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
@@ -219,8 +409,10 @@ func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Contex
 				SessionID:  allocation.SessionID,
 				StartedAt:  time.Now(),
 				HMACSecret: managerSecret,
+				ManagerID:  managerID,
 			}
 		}
+		route.ManagerID = managerID
 		route.RemoteSessionID = result.AllocatedSessionID
 		route.ProxyURL = result.ProxyURL
 		if route.HMACSecret == "" {
@@ -246,15 +438,11 @@ func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	}
 	h := c.Request().Header.Get("Authorization")
 	token := strings.TrimPrefix(h, "Bearer ")
-	if pc.manager.ValidateProvisionerToken(token) {
-		return true
-	}
-	_, _, ok := pc.authorizedExternalManager(c)
-	return ok
+	return pc.manager.ValidateProvisionerToken(token)
 }
 
 func (pc *ProvisionerController) authorizedExternalManager(c echo.Context) (string, string, bool) {
-	if pc.manager == nil || pc.settingsRepo == nil {
+	if pc.settingsRepo == nil {
 		return "", "", false
 	}
 	token := c.Request().Header.Get("X-Session-Manager-Token")

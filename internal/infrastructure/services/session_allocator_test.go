@@ -16,6 +16,30 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestAllocationProxyURLUsesStableControlPlaneServiceByDefault(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		namespace: "test-ns",
+		k8sConfig: &config.KubernetesSessionConfig{},
+	}
+
+	if got, want := manager.AllocationProxyURL(), "http://control.test-ns.svc.cluster.local:8080"; got != want {
+		t.Fatalf("AllocationProxyURL() = %q, want %q", got, want)
+	}
+}
+
+func TestAllocationProxyURLPrefersExplicitConfiguration(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		namespace: "test-ns",
+		k8sConfig: &config.KubernetesSessionConfig{
+			ProvisionerProxyURL: "https://proxy.example.com/",
+		},
+	}
+
+	if got, want := manager.AllocationProxyURL(), "https://proxy.example.com"; got != want {
+		t.Fatalf("AllocationProxyURL() = %q, want %q", got, want)
+	}
+}
+
 func TestCreateSessionWithAllocatorReturnsAfterSubmittingAllocation(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 
@@ -61,6 +85,10 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.KubernetesSession.Namespace = "test-ns"
+	cfg.KubernetesSession.NetworkFilterImage = "nfa:parent"
+	cfg.Scia.Enabled = true
+	cfg.Scia.SessionSidecarEnabled = true
+	cfg.Scia.SessionSidecarImage = "scia:parent"
 
 	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
 	if err != nil {
@@ -71,7 +99,7 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 	settings := &sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{UserID: "test-user", Scope: string(entities.ScopeUser)},
 	}
-	if err := manager.SubmitExternalSessionAllocation(context.Background(), "manager-a", "test-session", settings, req); err != nil {
+	if err := manager.SubmitExternalSessionAllocation(context.Background(), "manager-a", "test-session", settings, req, nil); err != nil {
 		t.Fatalf("SubmitExternalSessionAllocation() error = %v", err)
 	}
 
@@ -95,6 +123,12 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 	}
 	if allocation.ProvisionSettings == nil {
 		t.Fatalf("allocation.ProvisionSettings is nil")
+	}
+	if allocation.RuntimeProfile == nil || allocation.RuntimeProfile.Version != 1 {
+		t.Fatalf("allocation.RuntimeProfile = %#v", allocation.RuntimeProfile)
+	}
+	if allocation.RuntimeProfile.Kubernetes.NetworkFilterImage != "nfa:parent" || allocation.RuntimeProfile.Scia.SessionSidecarImage != "scia:parent" {
+		t.Fatalf("allocation runtime profile did not inherit parent config: %#v", allocation.RuntimeProfile)
 	}
 	provision, err := manager.getProvisionRequest(context.Background(), "test-session")
 	if err != nil {
@@ -213,6 +247,77 @@ func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 	_, err = manager.client.CoreV1().Secrets("test-ns").Get(context.Background(), sessionAllocationSecretName("test-session"), metav1.GetOptions{})
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("allocation Secret should be deleted, got err=%v", err)
+	}
+}
+
+func TestDeletePendingSessionAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	client := fake.NewSimpleClientset()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := manager.saveSessionAllocation(ctx, &sessionallocation.AllocationRequest{
+		SessionID: "pending-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user"},
+		Status:    sessionallocation.StatusPending,
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	deleted, err := manager.DeletePendingSessionAllocation(ctx, "pending-session")
+	if err != nil {
+		t.Fatalf("DeletePendingSessionAllocation() error = %v", err)
+	}
+	if !deleted {
+		t.Fatal("DeletePendingSessionAllocation() deleted=false, want true")
+	}
+	_, err = client.CoreV1().Secrets("test-ns").Get(
+		ctx,
+		sessionAllocationSecretName("pending-session"),
+		metav1.GetOptions{},
+	)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("allocation Secret still exists or returned unexpected error: %v", err)
+	}
+}
+
+func TestDeletePendingSessionAllocationDoesNotDeleteClaimedAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	client := fake.NewSimpleClientset()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := manager.saveSessionAllocation(ctx, &sessionallocation.AllocationRequest{
+		SessionID: "allocating-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user"},
+		Status:    sessionallocation.StatusAllocating,
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	deleted, err := manager.DeletePendingSessionAllocation(ctx, "allocating-session")
+	if err != nil {
+		t.Fatalf("DeletePendingSessionAllocation() error = %v", err)
+	}
+	if deleted {
+		t.Fatal("DeletePendingSessionAllocation() deleted=true, want false")
+	}
+	if _, err := client.CoreV1().Secrets("test-ns").Get(
+		ctx,
+		sessionAllocationSecretName("allocating-session"),
+		metav1.GetOptions{},
+	); err != nil {
+		t.Fatalf("allocation Secret was deleted: %v", err)
 	}
 }
 

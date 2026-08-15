@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## コマンド
 
 ```bash
-make build          # バイナリのビルド (bin/agentapi-proxy)
+make build          # バイナリのビルド (bin/ccplant)
 make test           # テスト実行 (CGO_ENABLED=1, race detector 有効)
 make test-verbose PKG=./internal/app  # 特定パッケージを詳細出力でテスト
 make lint           # golangci-lint 実行 (gofmt も含む)
@@ -28,7 +28,7 @@ agentapi-proxy は [coder/agentapi](https://github.com/coder/agentapi) のプロ
 ```
 internal/
   domain/         # エンティティ・インターフェース定義 (外部依存なし)
-    entities/     # Session, Task, Memory, Schedule など
+    entities/     # Session, Memory, Schedule など
     services/     # EncryptionService インターフェース
   usecases/       # ビジネスロジック
     ports/        # repositories/ (SessionManager, SettingsRepository など Port インターフェース)
@@ -95,16 +95,6 @@ spec/             # OpenAPI 仕様 (spec/openapi.json) + 静的ファイル埋�
 - **絶対に main ブランチに直接プッシュしてはいけない** — 必ず feature ブランチを切って作業し、PR を作成する
 - **API の変更時は必ず `spec/openapi.json` を更新する**（エンドポイント・スキーマ・タグ）
 
-### 📋 タスクリストの更新ルール
-
-以下のいずれかのアクションを実施した場合は、**必ずタスクリストを更新**してください：
-
-- **PR を作成した** → `agentapi-proxy client task create` または `task update` でタスクを作成・更新し、PR の URL をリンクとして含める
-- **開発環境にデプロイした** → タスクを作成・更新してデプロイ完了を記録する
-- **変更をブランチにプッシュした** → タスクを作成・更新して進捗を反映する
-
-タスクリストは常に最新の状態を保ち、ユーザーが現在の進捗とネクストアクションを把握できるようにしてください。
-
 ### ✅ 作業完了時の必須チェックリスト
 
 作業完了時は以下を**順番に必ず実行**してください。1つでも省略してはいけません：
@@ -112,24 +102,10 @@ spec/             # OpenAPI 仕様 (spec/openapi.json) + 静的ファイル埋�
 1. **`make lint` を実行する** - コードの品質チェック
 2. **`make test` を実行する** - テストの実行
 3. **変更をブランチにプッシュし PR を作成する**
-4. **`agentapi-proxy client task create` でユーザータスクを1件作成する**
-   - `--task-type user`、`--scope user` を指定する
-   - ネクストアクションは最も重要なもの**1つだけ**に絞る（複数作らない）
-   - PR を作成した場合は `--link "url|title"` 形式で PR の URL をリンクとして含める
-   - 例：PR レビュー依頼タスクの作成
-     ```bash
-     agentapi-proxy client task create \
-       --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT \
-       --session-id $AGENTAPI_SESSION_ID \
-       --title "PR をレビューしてください" \
-       --task-type user \
-       --scope user \
-       --link "https://github.com/owner/repo/pull/123|PR #123"
-     ```
-5. **`agentapi-proxy client send-notification` で通知を送る**
+4. **`ccplant client send-notification` で通知を送る**
    - 例：
      ```bash
-     agentapi-proxy client send-notification \
+     ccplant client send-notification \
        --title "作業が完了しました" \
        --body "作業内容を確認してください" \
        --notify-session-id "$AGENTAPI_SESSION_ID"

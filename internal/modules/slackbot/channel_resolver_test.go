@@ -63,6 +63,23 @@ func TestSlackChannelResolver_GetBotToken(t *testing.T) {
 	})
 }
 
+func TestSlackChannelResolver_GetBotTokenUsesSeparateSecretClient(t *testing.T) {
+	cacheClient := fake.NewSimpleClientset()
+	secretClient := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "external-token", Namespace: "test-ns"},
+		Data:       map[string][]byte{"bot-token": []byte("xoxb-external")},
+	})
+	resolver := NewSlackChannelResolver(cacheClient, "test-ns").WithSecretClient(secretClient)
+
+	token, err := resolver.GetBotToken(context.Background(), "external-token", "bot-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "xoxb-external" {
+		t.Fatalf("GetBotToken() = %q, want xoxb-external", token)
+	}
+}
+
 func TestSlackChannelResolver_ResolveChannelName_InMemoryCache(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	resolver := NewSlackChannelResolver(client, "test-ns")

@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -21,16 +22,20 @@ const (
 )
 
 type routeJSON struct {
-	SessionID       string            `json:"session_id"`
-	RemoteSessionID string            `json:"remote_session_id"`
-	ProxyURL        string            `json:"proxy_url"`
-	HMACSecret      string            `json:"hmac_secret"`
-	UserID          string            `json:"user_id,omitempty"`
-	Scope           string            `json:"scope,omitempty"`
-	TeamID          string            `json:"team_id,omitempty"`
-	Tags            map[string]string `json:"tags,omitempty"`
-	StartedAt       time.Time         `json:"started_at,omitempty"`
-	InitialMessage  string            `json:"initial_message,omitempty"`
+	SessionID        string            `json:"session_id"`
+	RemoteSessionID  string            `json:"remote_session_id"`
+	ManagerID        string            `json:"manager_id,omitempty"`
+	ProxyURL         string            `json:"proxy_url"`
+	HMACSecret       string            `json:"hmac_secret"`
+	Transport        string            `json:"transport,omitempty"`
+	RuntimeTokenHash string            `json:"runtime_token_hash,omitempty"`
+	Generation       int64             `json:"generation,omitempty"`
+	UserID           string            `json:"user_id,omitempty"`
+	Scope            string            `json:"scope,omitempty"`
+	TeamID           string            `json:"team_id,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
+	StartedAt        time.Time         `json:"started_at,omitempty"`
+	InitialMessage   string            `json:"initial_message,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -55,16 +60,20 @@ func (r *KubernetesSessionRouteRepository) secretName(sessionID string) string {
 // Save creates or updates a session route secret
 func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *portrepos.SessionRoute) error {
 	data, err := json.Marshal(&routeJSON{
-		SessionID:       route.SessionID,
-		RemoteSessionID: route.RemoteSessionID,
-		ProxyURL:        route.ProxyURL,
-		HMACSecret:      route.HMACSecret,
-		UserID:          route.UserID,
-		Scope:           route.Scope,
-		TeamID:          route.TeamID,
-		Tags:            route.Tags,
-		StartedAt:       route.StartedAt,
-		InitialMessage:  route.InitialMessage,
+		SessionID:        route.SessionID,
+		RemoteSessionID:  route.RemoteSessionID,
+		ManagerID:        route.ManagerID,
+		ProxyURL:         route.ProxyURL,
+		HMACSecret:       route.HMACSecret,
+		Transport:        route.Transport,
+		RuntimeTokenHash: route.RuntimeTokenHash,
+		Generation:       route.Generation,
+		UserID:           route.UserID,
+		Scope:            route.Scope,
+		TeamID:           route.TeamID,
+		Tags:             route.Tags,
+		StartedAt:        route.StartedAt,
+		InitialMessage:   route.InitialMessage,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -87,7 +96,16 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				current, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+				if getErr != nil {
+					return getErr
+				}
+				updated := secret.DeepCopy()
+				updated.ResourceVersion = current.ResourceVersion
+				_, updateErr := r.client.CoreV1().Secrets(r.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+				return updateErr
+			})
 			if err != nil {
 				return fmt.Errorf("failed to update session route secret: %w", err)
 			}
@@ -119,16 +137,20 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 	}
 
 	return &portrepos.SessionRoute{
-		SessionID:       rj.SessionID,
-		RemoteSessionID: rj.RemoteSessionID,
-		ProxyURL:        rj.ProxyURL,
-		HMACSecret:      rj.HMACSecret,
-		UserID:          rj.UserID,
-		Scope:           rj.Scope,
-		TeamID:          rj.TeamID,
-		Tags:            rj.Tags,
-		StartedAt:       rj.StartedAt,
-		InitialMessage:  rj.InitialMessage,
+		SessionID:        rj.SessionID,
+		RemoteSessionID:  rj.RemoteSessionID,
+		ManagerID:        rj.ManagerID,
+		ProxyURL:         rj.ProxyURL,
+		HMACSecret:       rj.HMACSecret,
+		Transport:        rj.Transport,
+		RuntimeTokenHash: rj.RuntimeTokenHash,
+		Generation:       rj.Generation,
+		UserID:           rj.UserID,
+		Scope:            rj.Scope,
+		TeamID:           rj.TeamID,
+		Tags:             rj.Tags,
+		StartedAt:        rj.StartedAt,
+		InitialMessage:   rj.InitialMessage,
 	}, nil
 }
 
@@ -156,16 +178,20 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			continue
 		}
 		routes = append(routes, &portrepos.SessionRoute{
-			SessionID:       rj.SessionID,
-			RemoteSessionID: rj.RemoteSessionID,
-			ProxyURL:        rj.ProxyURL,
-			HMACSecret:      rj.HMACSecret,
-			UserID:          rj.UserID,
-			Scope:           rj.Scope,
-			TeamID:          rj.TeamID,
-			Tags:            rj.Tags,
-			StartedAt:       rj.StartedAt,
-			InitialMessage:  rj.InitialMessage,
+			SessionID:        rj.SessionID,
+			RemoteSessionID:  rj.RemoteSessionID,
+			ManagerID:        rj.ManagerID,
+			ProxyURL:         rj.ProxyURL,
+			HMACSecret:       rj.HMACSecret,
+			Transport:        rj.Transport,
+			RuntimeTokenHash: rj.RuntimeTokenHash,
+			Generation:       rj.Generation,
+			UserID:           rj.UserID,
+			Scope:            rj.Scope,
+			TeamID:           rj.TeamID,
+			Tags:             rj.Tags,
+			StartedAt:        rj.StartedAt,
+			InitialMessage:   rj.InitialMessage,
 		})
 	}
 	return routes, nil

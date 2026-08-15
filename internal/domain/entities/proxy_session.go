@@ -5,13 +5,14 @@ import "time"
 // ProxySession represents a session that lives on an external session manager (External Session Manager).
 // It implements the Session interface so it can be used anywhere a Session is expected.
 type ProxySession struct {
-	id        string
-	userID    string
-	scope     ResourceScope
-	teamID    string
-	tags      map[string]string
-	status    string
-	startedAt time.Time
+	id            string
+	userID        string
+	scope         ResourceScope
+	teamID        string
+	tags          map[string]string
+	status        string
+	startedAt     time.Time
+	lastMessageAt time.Time
 }
 
 // NewProxySession creates a new ProxySession
@@ -28,13 +29,14 @@ func NewProxySessionWithStatus(id, userID string, scope ResourceScope, teamID st
 		status = "running"
 	}
 	return &ProxySession{
-		id:        id,
-		userID:    userID,
-		scope:     scope,
-		teamID:    teamID,
-		tags:      tags,
-		status:    status,
-		startedAt: startedAt,
+		id:            id,
+		userID:        userID,
+		scope:         scope,
+		teamID:        teamID,
+		tags:          tags,
+		status:        status,
+		startedAt:     startedAt,
+		lastMessageAt: startedAt,
 	}
 }
 
@@ -47,6 +49,8 @@ func (p *ProxySession) Tags() map[string]string  { return p.tags }
 func (p *ProxySession) Status() string           { return p.status }
 func (p *ProxySession) StartedAt() time.Time     { return p.startedAt }
 func (p *ProxySession) UpdatedAt() time.Time     { return p.startedAt }
-func (p *ProxySession) LastMessageAt() time.Time { return p.startedAt }
+func (p *ProxySession) LastMessageAt() time.Time { return p.lastMessageAt }
 func (p *ProxySession) Description() string      { return p.tags["description"] }
 func (p *ProxySession) Cancel()                  {}
+
+func (p *ProxySession) SetLastMessageAt(value time.Time) { p.lastMessageAt = value }

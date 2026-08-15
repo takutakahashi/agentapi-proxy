@@ -1,14 +1,16 @@
-{{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled }}
+{{- $manager := .Values.sessionManager | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- if and ($manager.enabled | default false) ($k8s.enabled | default false) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "agentapi-proxy.fullname" . }}-session-manager
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
 subjects:
   - kind: ServiceAccount
-    name: {{ include "agentapi-proxy.serviceAccountName" . }}
+    name: {{ include "agentapi-proxy.sessionManagerServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: Role

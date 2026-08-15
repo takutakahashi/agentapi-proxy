@@ -393,6 +393,39 @@ func (s *SimpleAuthService) AddUser(user *entities.User) {
 	s.users[user.ID()] = user
 }
 
+// LoadBootstrapAdmin registers a non-expiring break-glass admin token. It is
+// intentionally independent of GitHub/static auth enablement so a fresh
+// installation can always reach the admin configuration UI.
+func (s *SimpleAuthService) LoadBootstrapAdmin(userID, username, token string) error {
+	if strings.TrimSpace(userID) == "" {
+		return errors.New("bootstrap admin user ID is required")
+	}
+	if strings.TrimSpace(username) == "" {
+		return errors.New("bootstrap admin username is required")
+	}
+	if strings.TrimSpace(token) == "" {
+		return errors.New("bootstrap admin token is required")
+	}
+
+	user := entities.NewUser(entities.UserID(userID), entities.UserTypeAdmin, username)
+	if err := user.SetRoles([]entities.Role{entities.RoleAdmin}); err != nil {
+		return fmt.Errorf("set bootstrap admin role: %w", err)
+	}
+	user.SetPermissions([]entities.Permission{entities.PermissionAdmin})
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.users[user.ID()] = user
+	s.apiKeys[token] = &services.APIKey{
+		Key:         token,
+		UserID:      user.ID(),
+		Permissions: []entities.Permission{entities.PermissionAdmin},
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	s.keyToUserID[token] = user.ID()
+	return nil
+}
+
 // authenticateWithPassword authenticates using username and password
 func (s *SimpleAuthService) authenticateWithPassword(username, password string) (*entities.User, error) {
 	s.mu.RLock()

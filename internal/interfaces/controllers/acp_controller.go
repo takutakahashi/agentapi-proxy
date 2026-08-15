@@ -34,9 +34,14 @@ type ACPController struct {
 	sessionManagerProvider SessionManagerProvider
 	sessionCreator         SessionCreator
 	sessionRouteRepo       portrepos.SessionRouteRepository
+	esmControlTunnel       ESMControlTunnel
 	// bridgeSessionCache maps proxy session ID → bridge-internal session ID.
 	// Populated on first use to avoid fetching GET /session on every RPC call.
 	bridgeSessionCache sync.Map
+}
+
+func (c *ACPController) SetESMControlTunnel(tunnel ESMControlTunnel) {
+	c.esmControlTunnel = tunnel
 }
 
 // NewACPController creates a new ACPController.
@@ -353,6 +358,18 @@ func (c *ACPController) handleSessionResume(ctx echo.Context, req acpRequest) er
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "permission denied"))
 	}
+	if ensurer, ok := c.sessionManagerProvider.GetSessionManager().(portrepos.SessionWorkloadEnsurer); ok {
+		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), params.SessionId)
+		if err != nil {
+			return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to resume session workload: "+err.Error()))
+		}
+		if ensured != nil {
+			session = ensured
+		}
+		if restoring {
+			return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, map[string]string{"status": "restoring"}))
+		}
+	}
 
 	// "active" is the proxy-level status for a running K8s session.
 	// "running"/"stable" are agentapi-level statuses used in other contexts.
@@ -522,7 +539,6 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
-
 	addr := session.Addr()
 	if addr == "" {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
@@ -573,7 +589,7 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 				log.Printf("[ACP] HandleSessionSSE: route lookup failed (sessionId=%s): %v", sessionId, err)
 				return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "session route lookup failed"})
 			}
-			if route != nil && route.ProxyURL != "" && route.RemoteSessionID != "" {
+			if route != nil && (route.ProxyURL != "" || route.ManagerID != "") && route.RemoteSessionID != "" {
 				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
 					return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 				}
@@ -587,7 +603,6 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 		log.Printf("[ACP] HandleSessionSSE: permission denied (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
-
 	addr := session.Addr()
 	if addr == "" {
 		log.Printf("[ACP] HandleSessionSSE: session has no address (sessionId=%s)", sessionId)
@@ -840,6 +855,23 @@ func (c *ACPController) dialRemoteBridgeSSE(
 ) (<-chan sseEvent, func()) {
 	eventCh := make(chan sseEvent, 8)
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/" + route.RemoteSessionID + "/sse"
+	directRuntime := route.Transport == portrepos.SessionRouteTransportDirectRuntime
+	tunnelKey := route.ManagerID
+	if directRuntime {
+		tunnelKey = route.SessionID
+	}
+	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx, tunnelKey)
+	if useTunnel {
+		if directRuntime {
+			targetURL = "http://session.local/sse"
+		} else {
+			targetURL = "http://esm.local/" + route.RemoteSessionID + "/sse"
+		}
+	} else if route.ProxyURL == "" {
+		log.Printf("[ACP] SSE: outbound ESM control connection is unavailable")
+		close(eventCh)
+		return eventCh, func() {}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		log.Printf("[ACP] SSE: failed to create remote bridge request: %v", err)
@@ -855,7 +887,12 @@ func (c *ACPController) dialRemoteBridgeSSE(
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
 	req.Header.Set(hmacutil.TimestampHeader, ts)
 
-	resp, err := http.DefaultClient.Do(req)
+	var resp *http.Response
+	if useTunnel {
+		resp, err = c.esmControlTunnel.Do(ctx, tunnelKey, route.SessionID, route.RemoteSessionID, req)
+	} else {
+		resp, err = http.DefaultClient.Do(req)
+	}
 	if err != nil {
 		log.Printf("[ACP] SSE: failed to connect to remote bridge: %v", err)
 		close(eventCh)

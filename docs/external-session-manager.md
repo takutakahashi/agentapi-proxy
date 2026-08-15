@@ -1,5 +1,9 @@
 # External Session Manager
 
+> **Proposed architecture:** [`direct-session-runtime.md`](direct-session-runtime.md) defines the
+> migration that removes ESM from steady-state session traffic. The behavior below describes the
+> current implementation until that migration is complete.
+
 External Session Manager (ESM) lets a main agentapi-proxy instance route session
 workloads to another agentapi-proxy instance. The main proxy is called **親プロキシ**.
 The external manager remains **External Session Manager** or **ESM**.
@@ -9,6 +13,10 @@ requests. 親プロキシ does not need to send session creation requests to the
 This is useful for development and for environments where the ESM should
 register itself by token.
 
+Current ESMs also keep an outbound control poll open. Normal session HTTP and SSE
+traffic is carried as short-lived Redis-backed RPC commands fetched over that poll;
+the ESM posts response frames back to 親プロキシ. The ESM never connects to Redis.
+
 ## Data Flow
 
 ```text
@@ -16,59 +24,37 @@ user -> 親プロキシ /start
         親プロキシ queues an allocation for manager_id
         ESM polls 親プロキシ with SESSION_MANAGER_CONNECTION_TOKEN
         ESM creates/adopts a local session
-        ESM reports remote_session_id and SESSION_MANAGER_PUBLIC_URL
+        ESM reports remote_session_id
 user -> 親プロキシ /:sessionId/*
-        親プロキシ HMAC-signs and forwards traffic to the ESM
+        親プロキシ queues an authenticated manager-scoped RPC
+        ESM polls, dispatches it locally, and posts response/SSE frames
 ```
 
-親プロキシ still needs a routable URL for the ESM after allocation, because normal
-session traffic such as `/status`, messages, and delete is proxied to the
-remote session. That URL is `SESSION_MANAGER_PUBLIC_URL`.
+`SESSION_MANAGER_PUBLIC_URL` is optional. It is retained only as a compatibility
+fallback for older managers that do not maintain an outbound control lease. A current
+ESM can run behind NAT or a firewall without accepting traffic from 親プロキシ.
 
 ## 親プロキシ: Register the Manager
 
-Register an ESM without `url`. 親プロキシ generates a one-time `connection_token`
-when `hmac_secret` is omitted.
+Issue a short-lived registration token from the Web settings page or `POST
+/external-session-managers/registration-tokens`, then give only that token to
+the manager host. Direct registration through settings or a parent API key is
+not supported.
 
-```bash
-PARENT_PROXY_URL="https://parent-proxy.example.com"
-API_KEY="<parent-proxy-api-key>"
-USERNAME="<github-username>"
-
-curl -X PUT "$PARENT_PROXY_URL/settings/$USERNAME" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "external_session_managers": [
-      {
-        "id": "dev-esm-allocator",
-        "name": "Dev ESM Allocator",
-        "default": false
-      }
-    ]
-  }'
-```
-
-The response includes the token only at creation or rotation time:
+The issuance response contains a registration token that expires after 15
+minutes and can be exchanged once:
 
 ```json
 {
-  "external_session_managers": [
-    {
-      "id": "dev-esm-allocator",
-      "name": "Dev ESM Allocator",
-      "has_connection_token": true,
-      "connection_token": "<generated-token>",
-      "default": false
-    }
-  ]
+  "manager_id": "dev-esm-allocator",
+  "registration_token": "<one-time-token>",
+  "expires_at": "2026-08-02T07:00:00Z"
 }
 ```
 
-Store `<generated-token>` securely. It is not returned by later settings reads.
-
-When updating settings, preserve any existing managers that should remain
-registered. The `external_session_managers` array represents the desired list.
+The manager exchanges it through `/external-session-managers/enroll` and
+stores the returned connection token. Neither token is returned by later
+settings reads.
 
 ## External Session Manager: Required Environment
 
@@ -80,8 +66,7 @@ export SESSION_MANAGER_ENABLED=true
 export SESSION_MANAGER_UPSTREAM_URL="https://parent-proxy.example.com"
 export SESSION_MANAGER_CONNECTION_TOKEN="<generated-token>"
 export SESSION_MANAGER_HMAC_SECRET="<generated-token>"
-export SESSION_MANAGER_PUBLIC_URL="https://esm.example.com"
-export AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL="https://esm.example.com"
+export AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL="http://control.<esm-namespace>.svc.cluster.local:8080"
 ```
 
 Important details:
@@ -90,10 +75,41 @@ Important details:
   allocator endpoint.
 - `SESSION_MANAGER_HMAC_SECRET` must match the manager token stored in 親プロキシ.
   親プロキシ uses that same secret to sign proxied requests to the ESM.
-- `SESSION_MANAGER_PUBLIC_URL` is the URL 親プロキシ stores in the session route
-  after allocation. It must be reachable from 親プロキシ.
+- `SESSION_MANAGER_PUBLIC_URL` is optional and only enables fallback for older
+  parent/manager combinations.
 - `AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL` should point at the ESM so
   provisioned session pods call back to the correct manager.
+
+### Parent-owned session runtime profile
+
+Kubernetes ESMs do not independently configure the NFA or SCIA session runtime.
+Every external allocation carries a versioned `runtime_profile` generated from
+the parent proxy's effective configuration. Before creating the local session,
+the ESM applies that profile and idempotently ensures its inherited session
+ServiceAccount, Role, and RoleBinding.
+
+The allocation long-poll also carries a content-derived profile revision. On
+startup, after a parent connection failure recovers, or when that revision
+changes, the ESM fetches and applies the current snapshot immediately. A
+revision mismatch makes the parent end the current long-poll without waiting,
+so configuration changes deployed with a parent restart do not wait for a
+fixed synchronization interval. The profile on each allocation remains the
+final consistency check before session creation.
+
+The inherited profile includes:
+
+- the session ServiceAccount;
+- the NFA image and resource requests/limits, including its init containers;
+- whether the SCIA session sidecar is enabled;
+- the SCIA and config-renderer images, proxy port, `NO_PROXY`, credential IDs,
+  and integration host/path rules.
+
+There are intentionally no per-field ESM-side override flags for these fields.
+Kubernetes ESMs always apply the profile. Native ESMs ignore it by default and
+can opt in to the whole profile at installation time with
+`native install --inherit-runtime-profile`. An older parent that does not send
+`runtime_profile` retains the ESM's existing local configuration for upgrade
+compatibility.
 
 ## Kubernetes Example
 
@@ -173,8 +189,6 @@ In dev, the working configuration was:
 - Manager ID: `dev-esm-allocator`
 - 親プロキシ URL for ESM polling:
   `http://agentapi-proxy.agentapi-ui-dev.svc.cluster.local:8080`
-- ESM public URL for routes:
-  `http://agentapi-proxy-esm-dev.agentapi-ui-dev.svc.cluster.local:8080`
 - Connection token stored in Secret:
   `agentapi-proxy-esm-dev-token`, key `connection_token`
 - The same token used as `SESSION_MANAGER_CONNECTION_TOKEN` and
@@ -188,22 +202,42 @@ token, installs the host service, starts it, and sends the first heartbeat.
 
 Before registering, prepare:
 
-- An API key for the parent proxy with permission to create sessions.
+- A one-time registration token issued by the parent proxy.
 - An upstream URL for the parent proxy.
-- A public URL through which the parent proxy can reach the native manager.
-  The parent must be able to request `<public-url>/healthz` and proxy session
-  traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
-  when the native machine is not directly reachable from the cluster.
+
+The native manager opens an authenticated outbound control poll. It does not
+need a parent-reachable address, VPN route, reverse proxy, or inbound firewall
+rule.
+
+Multiple managers can run on one host. Give every additional manager a unique
+instance name and listen address:
+
+```bash
+agentapi-proxy native install --instance build-a --listen :8081 \
+  --upstream "$PARENT_PROXY_URL" \
+  --name build-a --registration-token "<registration-token>"
+agentapi-proxy native install --instance build-b --listen :8082 \
+  --upstream "$PARENT_PROXY_URL" \
+  --name build-b --registration-token "<registration-token>"
+
+agentapi-proxy native list
+agentapi-proxy native status --instance build-a
+agentapi-proxy native doctor --instance build-b
+```
+
+Omitting `--instance` selects the backward-compatible `default` instance. The
+CLI adds a protected `native_instance` allocator label automatically. Named
+instances have separate configuration, credentials, state, logs, and host
+services. On Linux they share the managed executable; uninstalling one instance
+does not remove that executable while another instance still uses it.
 
 For a user-scoped macOS manager with the filesystem sandbox enabled:
 
 ```bash
-export AGENTAPI_KEY="<parent-proxy-api-key>"
-
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --name "ios-builder" \
+  --registration-token "<registration-token>" \
   --label purpose=ios \
   --filesystem-sandbox
 ```
@@ -221,7 +255,6 @@ NATIVE_BIN="$HOME/Library/Application Support/agentapi-native/bin"
 
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --manager-env "PATH=$NODE_BIN:$NATIVE_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 ```
 
@@ -234,7 +267,6 @@ manager. To register it for a team instead of the current user:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --name "team-ios-builder" \
   --scope team \
   --team-id "my-org/ios-team" \
@@ -242,16 +274,55 @@ agentapi-proxy native install \
   --filesystem-sandbox
 ```
 
+Issue a one-time registration token for the authenticated user (or include
+`{"scope":"team","team_id":"my-org/ios-team"}` for a team):
+
+```bash
+curl -X POST "$PARENT_PROXY_URL/external-session-managers/registration-tokens" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+agentapi-proxy native install \
+  --upstream "$PARENT_PROXY_URL" \
+  --registration-token "<registration_token>"
+```
+
+The token expires after 15 minutes, is stored only as a hash by the parent,
+and can be exchanged exactly once. The manager automatically receives and
+stores its long-lived connection token during the exchange.
+When a team-bound service account issues a token without specifying `scope`,
+the token defaults to that service account's team scope. An explicit `scope`
+still takes precedence.
+
 The registration flow is:
 
 ```text
-native install
-  -> POST /external-session-managers
-  -> receive manager ID and one-time connection token
+authenticated user -> POST /external-session-managers/registration-tokens
+native install --registration-token ...
+  -> POST /external-session-managers/enroll
+  -> receive manager ID and connection token (returned once)
   -> install and start the native host service
-  -> POST the manager heartbeat
-  -> parent proxy verifies <public-url>/healthz
+  -> GET the outbound allocation and control long polls
+  -> POST the manager heartbeat and response frames
 ```
+
+## Outbound control authentication
+
+The allocation poll, control poll, response frames, and heartbeat all use the
+manager-specific connection token. 親プロキシ resolves the token to exactly one
+manager ID and rejects cross-manager access. Each RPC request is additionally bound
+to that manager in Redis; response frames from another manager are rejected.
+
+The control lease expires after 75 seconds. While it is live, 親プロキシ never probes
+or connects to `public_url`. If the lease is absent, routes with a legacy public URL
+fall back to direct HMAC-signed HTTP; routes without one return 503 until the manager
+reconnects.
+
+Commands and response frames expire from Redis after five minutes. User
+Authorization, API-key, cookie, and manager-token headers are removed before a
+command is stored. Redis remains an ephemeral relay and is accessed only by the
+parent backend.
 
 On macOS, configuration and credentials are stored under:
 
@@ -260,6 +331,10 @@ On macOS, configuration and credentials are stored under:
 ~/Library/Application Support/agentapi-native/credentials.json
 ```
 
+Named instances use sibling directories such as
+`~/Library/Application Support/agentapi-native-build-a/` and LaunchAgent labels
+such as `com.agentapi.native.build-a`.
+
 Check the installed service and end-to-end parent connectivity:
 
 ```bash
@@ -267,11 +342,10 @@ agentapi-proxy native status
 agentapi-proxy native doctor
 ```
 
-`native status` reports the manager ID, upstream and public URLs, active
+`native status` reports the manager ID, upstream URL, active
 sessions, and whether the filesystem sandbox is enabled. `native doctor`
 checks local configuration permissions, service health, and the parent
-heartbeat. If registration must retain an existing identity, pass the existing
-ID with `--manager-id`.
+heartbeat.
 
 List native sessions and inspect their provisioner logs directly from the host:
 
@@ -316,7 +390,6 @@ it when installing the manager:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --filesystem-sandbox
 ```
 

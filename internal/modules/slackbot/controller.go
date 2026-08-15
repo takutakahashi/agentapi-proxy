@@ -99,9 +99,10 @@ type SlackBotSessionConfig struct {
 
 // SlackBotSessionParams contains session parameters for SlackBot sessions
 type SlackBotSessionParams struct {
-	AgentType string `json:"agent_type,omitempty"`
-	Oneshot   bool   `json:"oneshot,omitempty"`
-	AuthProxy *bool  `json:"auth_proxy,omitempty"`
+	AgentType        string `json:"agent_type,omitempty"`
+	Oneshot          bool   `json:"oneshot,omitempty"`
+	AuthProxy        *bool  `json:"auth_proxy,omitempty"`
+	CredentialSource string `json:"credential_source,omitempty"`
 	// RepoFullName is the full name of the GitHub repository to clone (e.g. "org/repo").
 	// When set, this repository is always used for sessions created by this SlackBot,
 	// taking priority over any repository auto-detected from the Slack message text.
@@ -467,10 +468,11 @@ func toEntitySessionConfig(cfg *SlackBotSessionConfig) *entities.WebhookSessionC
 	}
 	if cfg.Params != nil {
 		params := &entities.SessionParams{
-			AgentType:    cfg.Params.AgentType,
-			Oneshot:      cfg.Params.Oneshot,
-			AuthProxy:    cfg.Params.AuthProxy,
-			RepoFullName: cfg.Params.RepoFullName,
+			AgentType:        cfg.Params.AgentType,
+			Oneshot:          cfg.Params.Oneshot,
+			AuthProxy:        cfg.Params.AuthProxy,
+			RepoFullName:     cfg.Params.RepoFullName,
+			CredentialSource: cfg.Params.CredentialSource,
 		}
 		sc.SetParams(params)
 	}
@@ -491,10 +493,11 @@ func fromEntitySessionConfig(sc *entities.WebhookSessionConfig) *SlackBotSession
 	}
 	if sc.Params() != nil {
 		cfg.Params = &SlackBotSessionParams{
-			AgentType:    sc.Params().AgentType,
-			Oneshot:      sc.Params().Oneshot,
-			AuthProxy:    sc.Params().AuthProxy,
-			RepoFullName: sc.Params().RepoFullName,
+			AgentType:        sc.Params().AgentType,
+			Oneshot:          sc.Params().Oneshot,
+			AuthProxy:        sc.Params().AuthProxy,
+			RepoFullName:     sc.Params().RepoFullName,
+			CredentialSource: sc.Params().CredentialSource,
 		}
 	}
 	return cfg

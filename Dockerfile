@@ -23,7 +23,31 @@ COPY . .
 # Build the application with optimizations
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/ccplant main.go
+
+# Lightweight runtime for control-plane API and background worker deployments.
+# Session execution and session-manager processes continue to use the full image.
+FROM alpine:3.22 AS api
+
+RUN apk add --no-cache ca-certificates tzdata && \
+    runtime_group="$(awk -F: '$3 == 999 { print $1; exit }' /etc/group)" && \
+    if [ -z "$runtime_group" ]; then addgroup -S -g 999 agentapi; runtime_group=agentapi; fi && \
+    adduser -S -D -H -u 999 -G "$runtime_group" -h /home/agentapi agentapi && \
+    mkdir -p /home/agentapi /home/agentapi/workdir && \
+    chown -R 999:999 /home/agentapi
+
+COPY --from=builder /app/bin/ccplant /usr/local/bin/ccplant
+
+USER 999:999
+WORKDIR /home/agentapi/workdir
+ENV HOME=/home/agentapi
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q -T 2 -O /dev/null http://127.0.0.1:8080/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/ccplant"]
+CMD ["server"]
 
 # Download agentapi release binary instead of rebuilding it from source.
 FROM alpine:3.22 AS agentapi-downloader
@@ -148,12 +172,12 @@ RUN curl https://mise.run | sh && \
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
 # We copy with -L to follow the symlink and get the actual binary, then clean up
 # Then create a symlink at ~/.local/bin/claude -> /opt/claude/bin/claude for volume mount compatibility
-RUN curl -fsSL https://claude.ai/install.sh | bash -s 2.1.12 && \
+RUN curl --retry 5 --retry-all-errors -fsSL https://claude.ai/install.sh | bash -s 2.1.12 && \
     sudo mkdir -p /opt/claude/bin && \
     sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
     sudo chown agentapi:agentapi /opt/claude/bin/claude && \
     sudo chmod +x /opt/claude/bin/claude && \
-    rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude 2>/dev/null || true && \
+    rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude && \
     mkdir -p /home/agentapi/.local/bin && \
     ln -sf /opt/claude/bin/claude /home/agentapi/.local/bin/claude
 
@@ -253,7 +277,7 @@ ENV CLAUDE_CODE_EXECUTABLE=/home/agentapi/.bun/install/global/node_modules/@anth
 
 # Copy the frequently changing proxy binary after the expensive runtime toolchain
 # setup so ordinary app changes do not invalidate those cached layers.
-COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
+COPY --from=builder /app/bin/ccplant /usr/local/bin/
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
@@ -278,4 +302,4 @@ EXPOSE 8080
 
 # Run the application with entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["mise", "exec", "--", "agentapi-proxy", "server"]
+CMD ["sh", "-c", "exec \"${CCPLANT_BINARY_PATH:-ccplant}\" server"]

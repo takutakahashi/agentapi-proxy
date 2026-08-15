@@ -93,38 +93,20 @@ func (b *BedrockSettings) Validate() error {
 
 // ExternalSessionManagerEntry represents a registered external session manager (External Session Manager)
 type ExternalSessionManagerEntry struct {
-	ID              string            `json:"id"`
-	InstanceID      string            `json:"instance_id,omitempty"`
-	Name            string            `json:"name"`
-	HMACSecret      string            `json:"hmac_secret,omitempty"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	PublicURL       string            `json:"public_url,omitempty"`
-	Version         string            `json:"version,omitempty"`
-	ActiveSessions  int               `json:"active_sessions,omitempty"`
-	LastHeartbeatAt time.Time         `json:"last_heartbeat_at,omitempty"`
+	ID                  string            `json:"id"`
+	InstanceID          string            `json:"instance_id,omitempty"`
+	Name                string            `json:"name"`
+	HMACSecret          string            `json:"hmac_secret,omitempty"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	PublicURL           string            `json:"public_url,omitempty"`
+	Version             string            `json:"version,omitempty"`
+	ActiveSessions      int               `json:"active_sessions,omitempty"`
+	LastHeartbeatAt     time.Time         `json:"last_heartbeat_at,omitempty"`
+	EnrollmentTokenHash string            `json:"enrollment_token_hash,omitempty"`
+	EnrollmentExpiresAt time.Time         `json:"enrollment_expires_at,omitempty"`
 	// Default indicates this manager is used automatically when no manager_id is specified at session creation.
 	// At most one entry should have Default=true.
 	Default bool `json:"default,omitempty"`
-}
-
-// SyncEncryptionConfig holds AWS KMS configuration for GitHub sync encryption
-type SyncEncryptionConfig struct {
-	KMSKeyARN    string `json:"kms_key_arn"`
-	AWSRegion    string `json:"aws_region"`
-	EncryptedDEK string `json:"encrypted_dek,omitempty"` // base64(KMS.Encrypt(DEK)), empty until first push
-	DEKVersion   int    `json:"dek_version,omitempty"`
-}
-
-// GitSyncConfig holds configuration for GitHub bidirectional sync
-type GitSyncConfig struct {
-	Enabled      bool                 `json:"enabled"`
-	RepoFullName string               `json:"repo_full_name"` // "owner/repo"
-	Branch       string               `json:"branch"`
-	RootPath     string               `json:"root_path"` // e.g. "agentapi-config/" (trailing slash)
-	AutoPush     bool                 `json:"auto_push"`
-	GitHubToken  string               `json:"github_token,omitempty"` // PAT for sync (stored encrypted in K8s Secret)
-	Encryption   SyncEncryptionConfig `json:"encryption"`
-	LastPushedAt time.Time            `json:"last_pushed_at,omitempty"` // time of last successful push
 }
 
 // Settings represents user or team settings
@@ -138,11 +120,12 @@ type Settings struct {
 	enabledPlugins          []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
 	envVars                 map[string]string // Custom environment variables
 	preferredTeamID         string            // "org/team-slug" format; if set, only this team's settings are used
+	githubAppInstallationID string            // GitHub App installation ID used for team sessions
 	slackUserID             string            // Slack DM notification user ID
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
-	gitSync                 *GitSyncConfig
 	defaultSessionProfileID string // ID of the default session profile for this tenant
+	defaultAgentType        string // Agent type used when a session does not specify one
 	createdAt               time.Time
 	updatedAt               time.Time
 }
@@ -306,6 +289,17 @@ func (s *Settings) SetPreferredTeamID(id string) {
 	s.updatedAt = time.Now()
 }
 
+// GitHubAppInstallationID returns the GitHub App installation ID for this settings scope.
+func (s *Settings) GitHubAppInstallationID() string {
+	return s.githubAppInstallationID
+}
+
+// SetGitHubAppInstallationID sets the GitHub App installation ID for this settings scope.
+func (s *Settings) SetGitHubAppInstallationID(id string) {
+	s.githubAppInstallationID = id
+	s.updatedAt = time.Now()
+}
+
 // SlackUserID returns the Slack user ID for DM notifications
 func (s *Settings) SlackUserID() string {
 	return s.slackUserID
@@ -365,17 +359,6 @@ func (s *Settings) Validate() error {
 	return nil
 }
 
-// GitSync returns the GitHub sync configuration
-func (s *Settings) GitSync() *GitSyncConfig {
-	return s.gitSync
-}
-
-// SetGitSync sets the GitHub sync configuration
-func (s *Settings) SetGitSync(g *GitSyncConfig) {
-	s.gitSync = g
-	s.updatedAt = time.Now()
-}
-
 // DefaultSessionProfileID returns the default session profile ID for this tenant
 func (s *Settings) DefaultSessionProfileID() string {
 	return s.defaultSessionProfileID
@@ -384,5 +367,14 @@ func (s *Settings) DefaultSessionProfileID() string {
 // SetDefaultSessionProfileID sets the default session profile ID for this tenant
 func (s *Settings) SetDefaultSessionProfileID(id string) {
 	s.defaultSessionProfileID = id
+	s.updatedAt = time.Now()
+}
+
+// DefaultAgentType returns the agent type used for sessions that do not specify one.
+func (s *Settings) DefaultAgentType() string { return s.defaultAgentType }
+
+// SetDefaultAgentType sets the agent type used for sessions that do not specify one.
+func (s *Settings) SetDefaultAgentType(agentType string) {
+	s.defaultAgentType = agentType
 	s.updatedAt = time.Now()
 }

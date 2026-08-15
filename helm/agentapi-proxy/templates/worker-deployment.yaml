@@ -1,0 +1,174 @@
+{{- $worker := .Values.worker | default dict }}
+{{- if (dig "enabled" false $worker) }}
+{{- $control := $worker.controlApi | default dict }}
+{{- $controlToken := $control.tokenSecretRef | default dict }}
+{{- $kv := $worker.kvStore | default dict }}
+{{- $redisClient := $worker.redis | default dict }}
+{{- $workerImage := $worker.image | default dict }}
+{{- $slack := $worker.slack | default dict }}
+{{- $slackToken := $slack.tokenSecretRef | default dict }}
+{{- $controlURL := $control.url | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port) }}
+{{- $redisAddr := $redisClient.addr | default "" }}
+{{- if and (not $redisAddr) .Values.redis.enabled }}
+{{- $redisAddr = printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-worker
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ $worker.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      {{- with $worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "agentapi-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+        {{- with $worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agentapi-proxy.workerServiceAccountName" . }}
+      automountServiceAccountToken: {{ eq (dig "backend" "" ($worker.kvStore | default dict)) "kubernetes" }}
+      {{- with $worker.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $worker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "agentapi-proxy.workerImage" . | quote }}
+          imagePullPolicy: {{ $workerImage.pullPolicy | default "IfNotPresent" }}
+          command: ["/usr/local/bin/ccplant"]
+          args: ["worker"]
+          {{- with $worker.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AGENTAPI_WORKER_CONTROL_API_URL
+              value: {{ $controlURL | quote }}
+            # Compatibility for binaries that predate the role-specific key.
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
+              value: {{ $controlURL | quote }}
+            - name: AGENTAPI_WORKER_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "worker.controlApi.tokenSecretRef.name is required when worker is enabled" $controlToken.name | quote }}
+                  key: {{ $controlToken.key | default "token" | quote }}
+            - name: AGENTAPI_KV_STORE_BACKEND
+              value: {{ required "worker.kvStore.backend is required when worker is enabled" $kv.backend | quote }}
+            - name: AGENTAPI_KV_STORE_NAMESPACE
+              value: {{ $kv.namespace | default "default" | quote }}
+            {{- if ne ($kv.backend | default "") "kubernetes" }}
+            {{- if $kv.databaseUrlSecretRef.name }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kv.databaseUrlSecretRef.name | quote }}
+                  key: {{ $kv.databaseUrlSecretRef.key | default "database-url" | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              value: {{ required "worker.kvStore.databaseUrl or databaseUrlSecretRef.name is required" $kv.databaseUrl | quote }}
+            {{- end }}
+            {{- if $kv.authTokenSecretRef.name }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kv.authTokenSecretRef.name | quote }}
+                  key: {{ $kv.authTokenSecretRef.key | default "auth-token" | quote }}
+            {{- else if $kv.authToken }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              value: {{ $kv.authToken | quote }}
+            {{- end }}
+            {{- end }}
+            - name: AGENTAPI_REDIS_ADDR
+              value: {{ required "worker.redis.addr or redis.enabled=true is required when worker is enabled" $redisAddr | quote }}
+            {{- $redisSecret := $redisClient.existingSecret | default "" }}
+            {{- if and (not $redisSecret) .Values.redis.enabled .Values.redis.auth.enabled }}
+            {{- $redisSecret = printf "%s-redis" (include "agentapi-proxy.fullname" .) }}
+            {{- end }}
+            {{- with $redisSecret }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $redisClient.existingSecretPasswordKey | default "redis-password" | quote }}
+            {{- end }}
+            - {name: AGENTAPI_REDIS_DB, value: {{ $redisClient.db | default 0 | quote }}}
+            - {name: AGENTAPI_REDIS_TLS_ENABLED, value: {{ $redisClient.tlsEnabled | default false | quote }}}
+            - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
+            - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            {{- with $slackToken.name }}
+            - name: AGENTAPI_SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $slackToken.appTokenKey | default "app-token" | quote }}
+            - name: AGENTAPI_SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $slackToken.botTokenKey | default "bot-token" | quote }}
+            {{- end }}
+            - {name: AGENTAPI_SLACK_DRY_RUN, value: {{ $slack.dryRun | default false | quote }}}
+            - {name: AGENTAPI_WEBHOOK_BASE_URL, value: {{ $slack.baseUrl | default "" | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ $worker.schedule.enabled | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ $worker.schedule.checkInterval | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION, value: {{ $worker.schedule.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE, value: {{ $worker.schedule.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD, value: {{ $worker.schedule.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED, value: {{ $worker.slackbotCleanup.enabled | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL, value: {{ $worker.slackbotCleanup.sessionTTL | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL, value: {{ $worker.slackbotCleanup.checkInterval | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL, value: {{ $worker.slackbotCleanup.sessionTTLCheckInterval | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN, value: {{ $worker.slackbotCleanup.dryRun | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION, value: {{ $worker.slackbotCleanup.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE, value: {{ $worker.slackbotCleanup.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD, value: {{ $worker.slackbotCleanup.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED, value: {{ $worker.stockInventory.enabled | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL, value: {{ $worker.stockInventory.checkInterval | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT, value: {{ $worker.stockInventory.targetCount | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED, value: {{ $worker.stockInventory.dockerEnabled | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS, value: {{ $worker.stockInventory.pools | toJson | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION, value: {{ $worker.stockInventory.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE, value: {{ $worker.stockInventory.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD, value: {{ $worker.stockInventory.leaderElection.retryPeriod | quote }}}
+            {{- with $worker.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $worker.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $worker.resources | nindent 12 }}
+      {{- with $worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -6,18 +6,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
-	"k8s.io/client-go/kubernetes"
 )
 
 // StockRepository manages the creation and counting of stock sessions.
 type StockRepository interface {
 	CreateStockSession(ctx context.Context, dind bool) error
 	CountStockSessions(ctx context.Context, dind bool) (int, error)
-	// PurgeStockSessions deletes all pre-warmed stock sessions. Called on
-	// worker startup so that stale sessions (e.g. built from an old image)
-	// are replaced with fresh ones.
-	PurgeStockSessions(ctx context.Context) error
+	// PurgeStaleStockSessions deletes pre-warmed sessions created by a
+	// different proxy Pod template revision.
+	PurgeStaleStockSessions(ctx context.Context) error
+}
+
+type PoolStockRepository interface {
+	CreateStockSessionForPool(ctx context.Context, pool string, dind bool) error
+	CountStockSessionsForPool(ctx context.Context, pool string, dind bool) (int, error)
 }
 
 // StockRequirements captures the pod capabilities a stock session is prepared for.
@@ -29,6 +33,7 @@ type StockRequirements struct {
 
 // StockPool captures one stock inventory target for a capability set.
 type StockPool struct {
+	Name         string
 	TargetCount  int
 	Requirements StockRequirements
 }
@@ -118,13 +123,6 @@ func (w *Worker) run(ctx context.Context) {
 	ticker := time.NewTicker(w.config.CheckInterval)
 	defer ticker.Stop()
 
-	// On startup, purge all existing stock sessions so that stale pods
-	// (built from an old image) are replaced with fresh ones.
-	log.Printf("[STOCK_INVENTORY] Purging existing stock sessions on startup")
-	if err := w.repo.PurgeStockSessions(ctx); err != nil {
-		log.Printf("[STOCK_INVENTORY] Warning: failed to purge stock sessions: %v", err)
-	}
-
 	// Run immediately on start.
 	w.replenishStock(ctx)
 
@@ -144,13 +142,17 @@ func (w *Worker) run(ctx context.Context) {
 
 // replenishStock checks the current stock count and creates sessions to reach TargetCount.
 func (w *Worker) replenishStock(ctx context.Context) {
+	if err := w.repo.PurgeStaleStockSessions(ctx); err != nil {
+		log.Printf("[STOCK_INVENTORY] Warning: failed to purge stale stock sessions: %v", err)
+		return
+	}
 	for _, pool := range w.effectivePools() {
 		w.replenishPool(ctx, pool)
 	}
 }
 
 func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
-	count, err := w.repo.CountStockSessions(ctx, pool.Requirements.DinD)
+	count, err := w.countPool(ctx, pool)
 	if err != nil {
 		log.Printf("[STOCK_INVENTORY] Failed to count stock sessions: %v", err)
 		return
@@ -165,10 +167,24 @@ func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
 		needed, count, pool.TargetCount, pool.Requirements.DinD)
 
 	for i := 0; i < needed; i++ {
-		if err := w.repo.CreateStockSession(ctx, pool.Requirements.DinD); err != nil {
+		if err := w.createPool(ctx, pool); err != nil {
 			log.Printf("[STOCK_INVENTORY] Failed to create stock session: %v", err)
 		}
 	}
+}
+
+func (w *Worker) countPool(ctx context.Context, pool StockPool) (int, error) {
+	if named, ok := w.repo.(PoolStockRepository); ok && pool.Name != "" {
+		return named.CountStockSessionsForPool(ctx, pool.Name, pool.Requirements.DinD)
+	}
+	return w.repo.CountStockSessions(ctx, pool.Requirements.DinD)
+}
+
+func (w *Worker) createPool(ctx context.Context, pool StockPool) error {
+	if named, ok := w.repo.(PoolStockRepository); ok && pool.Name != "" {
+		return named.CreateStockSessionForPool(ctx, pool.Name, pool.Requirements.DinD)
+	}
+	return w.repo.CreateStockSession(ctx, pool.Requirements.DinD)
 }
 
 func (w *Worker) effectivePools() []StockPool {
@@ -192,12 +208,12 @@ type LeaderWorker struct {
 // leader election configuration.
 func NewLeaderWorker(
 	repo StockRepository,
-	k8sClient kubernetes.Interface,
+	redisClient redis.UniversalClient,
 	workerConfig WorkerConfig,
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderWorker {
 	worker := NewWorker(repo, workerConfig)
-	elector := schedule.NewLeaderElector(k8sClient, electionConfig)
+	elector := schedule.NewLeaderElector(redisClient, electionConfig)
 	return &LeaderWorker{
 		worker:  worker,
 		elector: elector,

@@ -10,9 +10,6 @@ import (
 
 // BootstrapAPITokens loads all named API tokens from the repository into the
 // in-memory auth service so they authenticate immediately after startup. It
-// is run after MigrateAPITokens so freshly migrated tokens are also loaded
-// (loading them twice is harmless).
-//
 // Any per-token load failure is propagated so the caller can prevent serving
 // traffic rather than silently running with a partially loaded auth map.
 func BootstrapAPITokens(

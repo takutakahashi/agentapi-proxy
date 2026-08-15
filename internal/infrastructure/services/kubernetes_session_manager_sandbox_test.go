@@ -19,8 +19,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 		k8sConfig: &config.KubernetesSessionConfig{
 			Image:                          "session-image:latest",
 			ImagePullPolicy:                "IfNotPresent",
-			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.2",
-			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.3",
 			NetworkFilterCPURequest:        "250m",
 			NetworkFilterCPULimit:          "1000m",
 			NetworkFilterMemoryRequest:     "256Mi",
@@ -42,7 +41,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 
 	generate := initContainers[0]
 	assert.Equal(t, "network-filter-generate-iptables", generate.Name)
-	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.2", generate.Image)
+	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.3", generate.Image)
 	assert.Equal(t, "/bin/sh", generate.Command[0])
 	assert.Contains(t, generate.Command[2], "nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config.yaml")
 	assert.Contains(t, generate.Env, corev1.EnvVar{
@@ -70,7 +69,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 
 	restore := initContainers[1]
 	assert.Equal(t, "network-filter-setup", restore.Name)
-	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.2", restore.Image)
+	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.3", restore.Image)
 	assert.Equal(t, []string{"iptables-restore", "/etc/iptables/rules.v4"}, restore.Command)
 	assert.Equal(t, generate.Resources, restore.Resources)
 	assert.Equal(t, []corev1.VolumeMount{{
@@ -155,8 +154,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 			CPULimit:                       "1",
 			MemoryRequest:                  "128Mi",
 			MemoryLimit:                    "512Mi",
-			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.2",
-			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.3",
 			NetworkFilterInitMemoryRequest: "32Mi",
 			NetworkFilterInitMemoryLimit:   "64Mi",
 		},
@@ -218,7 +216,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	main := podSpec.Containers[0]
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: sciaNoProxyBase})
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
@@ -275,7 +273,7 @@ func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyDisabled(t *testing.T) {
 	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
 }
 
-func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyEnabled(t *testing.T) {
+func TestBuildDeploymentOmitsSciaSidecarWhenSessionSidecarDisabled(t *testing.T) {
 	manager := newSciaSidecarTestManager(false)
 	session := newSciaSidecarTestSession(t, manager)
 	req := &entities.RunServerRequest{
@@ -287,16 +285,16 @@ func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyEnabled(t *testing.T) {
 	assert.NoError(t, err)
 	podSpec := deployment.Spec.Template.Spec
 
-	assert.Contains(t, containerNames(podSpec.InitContainers), "scia-config")
-	assert.Contains(t, containerNames(podSpec.Containers), "scia-proxy")
-	assert.Contains(t, volumeNames(podSpec.Volumes), "scia-config")
-	assert.Contains(t, volumeNames(podSpec.Volumes), "scia-mitm-ca")
-	assert.Contains(t, volumeMountNames(podSpec.Containers[0].VolumeMounts), "scia-mitm-ca")
+	assert.NotContains(t, containerNames(podSpec.InitContainers), "scia-config")
+	assert.NotContains(t, containerNames(podSpec.Containers), "scia-proxy")
+	assert.NotContains(t, volumeNames(podSpec.Volumes), "scia-config")
+	assert.NotContains(t, volumeNames(podSpec.Volumes), "scia-mitm-ca")
+	assert.NotContains(t, volumeMountNames(podSpec.Containers[0].VolumeMounts), "scia-mitm-ca")
 
 	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}
 	manager.injectSciaProxyEnv(env, req)
-	assert.Equal(t, "http://127.0.0.1:18081", env["HTTP_PROXY"])
-	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
+	assert.NotContains(t, env, "HTTP_PROXY")
+	assert.NotContains(t, env, "SSL_CERT_FILE")
 }
 
 func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionManager {
@@ -326,8 +324,7 @@ func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionMan
 			CPULimit:                       "1",
 			MemoryRequest:                  "128Mi",
 			MemoryLimit:                    "512Mi",
-			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.2",
-			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.3",
 			NetworkFilterInitMemoryRequest: "32Mi",
 			NetworkFilterInitMemoryLimit:   "64Mi",
 		},
@@ -372,4 +369,12 @@ func volumeMountNames(mounts []corev1.VolumeMount) []string {
 		names = append(names, mount.Name)
 	}
 	return names
+}
+
+func TestStatusCanRecoverFromWorkloadReadiness(t *testing.T) {
+	assert.True(t, statusCanRecoverFromWorkloadReadiness("unhealthy"))
+	assert.True(t, statusCanRecoverFromWorkloadReadiness("stopped"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("error"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("timeout"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("running"))
 }

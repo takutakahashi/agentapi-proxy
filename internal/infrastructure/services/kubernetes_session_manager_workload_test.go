@@ -410,3 +410,97 @@ func TestPurgeStockSessionsKeepsAdoptedSessionWithStaleStockWorkloadLabels(t *te
 		t.Fatalf("Expected stale-labeled PVC to remain, got err=%v", err)
 	}
 }
+
+func TestPurgeStaleStockSessionsUsesEffectiveSessionPodTemplateHash(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	currentHash, err := manager.stockPodTemplateHash(ctx, false)
+	if err != nil {
+		t.Fatalf("Failed to calculate current stock template hash: %v", err)
+	}
+
+	for _, tc := range []struct {
+		id   string
+		hash string
+	}{
+		{id: "current-stock", hash: currentHash},
+		{id: "stale-stock", hash: "old-hash"},
+		{id: "legacy-stock"},
+	} {
+		name := "agentapi-session-" + tc.id
+		labels := map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy",
+			"agentapi.proxy/stock":         "true",
+			"agentapi.proxy/session-id":    tc.id,
+		}
+		if tc.hash != "" {
+			labels[stockPodTemplateHashLabel] = tc.hash
+		}
+		_, err = manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create stock service %s: %v", tc.id, err)
+		}
+		_, err = manager.client.AppsV1().Deployments("test-ns").Create(ctx, &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create stock deployment %s: %v", tc.id, err)
+		}
+	}
+
+	if err := manager.PurgeStaleStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStaleStockSessions failed: %v", err)
+	}
+
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-current-stock-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected current stock service to remain, got err=%v", err)
+	}
+	if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, "agentapi-session-current-stock", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected current stock deployment to remain, got err=%v", err)
+	}
+	for _, id := range []string{"stale-stock", "legacy-stock"} {
+		name := "agentapi-session-" + id
+		if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Fatalf("Expected stale service %s to be deleted, got err=%v", id, err)
+		}
+		if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Fatalf("Expected stale deployment %s to be deleted, got err=%v", id, err)
+		}
+	}
+}
+
+func TestStockPodTemplateHashTracksEffectiveSessionTemplate(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+
+	baseHash, err := manager.stockPodTemplateHash(ctx, false)
+	if err != nil {
+		t.Fatalf("Failed to calculate base stock template hash: %v", err)
+	}
+	repeatedHash, err := manager.stockPodTemplateHash(ctx, false)
+	if err != nil {
+		t.Fatalf("Failed to recalculate stock template hash: %v", err)
+	}
+	if repeatedHash != baseHash {
+		t.Fatalf("Stock template hash is not stable: %q != %q", repeatedHash, baseHash)
+	}
+
+	dindHash, err := manager.stockPodTemplateHash(ctx, true)
+	if err != nil {
+		t.Fatalf("Failed to calculate DinD stock template hash: %v", err)
+	}
+	if dindHash == baseHash {
+		t.Fatalf("DinD and non-DinD stock templates have the same hash %q", baseHash)
+	}
+
+	manager.k8sConfig.Image = "changed-session-image:latest"
+	changedHash, err := manager.stockPodTemplateHash(ctx, false)
+	if err != nil {
+		t.Fatalf("Failed to calculate changed stock template hash: %v", err)
+	}
+	if changedHash == baseHash {
+		t.Fatalf("Session image change did not alter stock template hash %q", baseHash)
+	}
+}

@@ -10,13 +10,15 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "agentapi-proxy",
+	Use:   "ccplant",
 	Short: "AgentAPI Proxy Server",
 	Long:  "A reverse proxy server for AgentAPI that routes requests based on configuration",
 }
 
 func init() {
 	rootCmd.AddCommand(cmd.ServerCmd)
+	rootCmd.AddCommand(cmd.WorkerCmd)
+	rootCmd.AddCommand(cmd.SessionManagerCmd)
 	rootCmd.AddCommand(cmd.HelpersCmd)
 	rootCmd.AddCommand(cmd.ClientCmd)
 	rootCmd.AddCommand(cmd.AgentProvisionerCmd)
@@ -24,6 +26,10 @@ func init() {
 	rootCmd.AddCommand(cmd.NativeCmd)
 	rootCmd.AddCommand(cmd.OneshotCmd)
 	rootCmd.AddCommand(cmd.AcpServerCmd)
+	rootCmd.AddCommand(cmd.DoctorCmd)
+	rootCmd.AddCommand(cmd.ControlPlaneCmd)
+	rootCmd.AddCommand(cmd.HelmCmd)
+	rootCmd.AddCommand(cmd.KVStoreCmd)
 }
 
 func main() {

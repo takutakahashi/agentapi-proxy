@@ -269,6 +269,8 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}
 		}
 	}
+	triggeredUserID := strings.TrimSpace(tags["username"])
+	tags["triggered_user_id"] = triggeredUserID
 
 	// Build environment variables
 	var env map[string]string
@@ -300,8 +302,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// because it requires Slackbot-specific message construction (buildMessage).
 	reuseFilter := entities.SessionFilter{
 		Tags: map[string]string{
-			"slack_channel":   channel,
-			"slack_thread_ts": threadKey,
+			"slack_channel":     channel,
+			"slack_thread_ts":   threadKey,
+			"triggered_user_id": triggeredUserID,
 		},
 		Status: "active",
 	}
@@ -357,7 +360,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// doesn't exist yet when they run concurrently) and would each spawn a new session.
 	// Use LoadOrStore so that only the first event proceeds; the second is dropped.
 	// The key is released once session creation completes (success or failure).
-	pendingKey := channel + ":" + threadKey
+	pendingKey := channel + ":" + threadKey + ":" + triggeredUserID
 	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
 		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
 		return nil
@@ -427,6 +430,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
 			UserID:                   userID,
+			TriggeredUserID:          triggeredUserID,
 			Scope:                    scope,
 			TeamID:                   teamID,
 			Teams:                    teams,
@@ -444,6 +448,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			CycleMaxCount:            slackCycleMaxCount,
 			SessionTTL:               slackSessionTTL,
 			SessionProfileID:         slackSessionProfileID,
+			CredentialSource: func() string {
+				if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+					return bot.SessionConfig().Params().CredentialSource
+				}
+				return ""
+			}(),
 			SlackParams: func() *entities.SlackParams {
 				sp := &entities.SlackParams{
 					Channel:  channel,

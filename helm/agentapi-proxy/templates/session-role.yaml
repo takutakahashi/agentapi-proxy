@@ -1,13 +1,15 @@
-{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
-{{- $scia := .Values.scia | default dict }}
-{{- $sciaEnabled := true }}
-{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
-{{- $sciaEnabled = $scia.enabled }}
-{{- end }}
+{{- $manager := .Values.sessionManager | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- $rbac := $k8s.rbac | default dict }}
+{{- $rbacCreate := true }}
+{{- if hasKey $rbac "create" }}{{- $rbacCreate = $rbac.create }}{{- end }}
+{{- if and ($manager.enabled | default false) ($k8s.enabled | default false) $rbacCreate }}
+{{- $scia := $manager.scia | default dict }}
+{{- $sciaEnabled := dig "enabled" false $scia }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: agentapi-proxy-session
+  name: {{ $k8s.serviceAccountName | default "agentapi-proxy-session" }}
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 rules:
@@ -21,11 +23,6 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list"]
-  # Permissions for credentials-sync sidecar to sync credentials.json to Secret
-  # Note: 'get' is not needed - uses create-first then replace approach
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create", "update"]
   {{- if $sciaEnabled }}
   # Dynamic scia users create per-user refresh-token Secrets at runtime, so
   # session pods cannot enumerate resourceNames ahead of time.

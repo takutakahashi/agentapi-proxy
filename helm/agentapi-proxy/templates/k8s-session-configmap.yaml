@@ -1,4 +1,8 @@
-{{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
+{{- $k8s := .Values.kubernetesSession | default dict }}
+{{- if (dig "enabled" false (.Values.sessionManager | default dict)) }}
+{{- $k8s = dig "kubernetesSession" (dict) .Values.sessionManager }}
+{{- end }}
+{{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,19 +12,19 @@ metadata:
 data:
   k8s-session-config.yaml: |
     kubernetes_session:
-      {{- if .Values.kubernetesSession.nodeSelector }}
+      {{- if $k8s.nodeSelector }}
       node_selector:
-        {{- range $key, $value := .Values.kubernetesSession.nodeSelector }}
+        {{- range $key, $value := $k8s.nodeSelector }}
         {{ $key }}: {{ $value | quote }}
         {{- end }}
       {{- end }}
-      {{- if .Values.kubernetesSession.affinity }}
+      {{- if $k8s.affinity }}
       affinity:
-        {{- toYaml .Values.kubernetesSession.affinity | nindent 8 }}
+        {{- toYaml $k8s.affinity | nindent 8 }}
       {{- end }}
-      {{- if .Values.kubernetesSession.tolerations }}
+      {{- if $k8s.tolerations }}
       tolerations:
-        {{- range .Values.kubernetesSession.tolerations }}
+        {{- range $k8s.tolerations }}
         - key: {{ .key | quote }}
           {{- if .operator }}
           operator: {{ .operator | quote }}
@@ -36,8 +40,8 @@ data:
           {{- end }}
         {{- end }}
       {{- end }}
-  {{- if .Values.kubernetesSession.podTemplate }}
+  {{- if $k8s.podTemplate }}
   session-pod-template.yaml: |
-    {{- toYaml .Values.kubernetesSession.podTemplate | nindent 4 }}
+    {{- toYaml $k8s.podTemplate | nindent 4 }}
   {{- end }}
 {{- end }}
