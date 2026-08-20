@@ -609,9 +609,10 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				"CODEX_MODEL_CONTEXT_WINDOW":               "65536",
 				"CODEX_MODEL_AUTO_COMPACT_TOKEN_LIMIT":     "32768",
 				"CODEX_MODEL_SUPPORTS_REASONING_SUMMARIES": "false",
+				"CODEX_MODEL_REASONING_EFFORT":             "xhigh",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_context_window = 128000\nmodel_auto_compact_token_limit = 64000\nmodel_supports_reasoning_summaries = true\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
+				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_context_window = 128000\nmodel_auto_compact_token_limit = 64000\nmodel_supports_reasoning_summaries = true\nmodel_reasoning_effort = \"medium\"\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
 			},
 		}
 
@@ -649,10 +650,57 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 		assert.NotContains(t, content, `model_context_window = 128000`)
 		assert.NotContains(t, content, `model_auto_compact_token_limit = 64000`)
 		assert.NotContains(t, content, `model_supports_reasoning_summaries = true`)
+		assert.Contains(t, content, `model_reasoning_effort = "xhigh"`)
+		assert.NotContains(t, content, `model_reasoning_effort = "medium"`)
 		assert.Less(t, strings.Index(content, `model = "qwen3-coder-next"`), strings.Index(content, "[sandbox_workspace_write]"))
 		assert.Less(t, strings.Index(content, `model_provider = "agentapi_openai_compatible"`), strings.Index(content, "[sandbox_workspace_write]"))
 		assert.Less(t, strings.Index(content, "[sandbox_workspace_write]"), strings.Index(content, "[model_providers.agentapi_openai_compatible]"))
 		assert.NotContains(t, content, "env_key")
+	})
+
+	t.Run("writes model_reasoning_effort from env", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-reasoning-effort-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-reasoning-effort",
+				UserID:    "user-codex-reasoning-effort",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Env: map[string]string{
+				"OPENAI_BASE_URL":              "http://proxy.example.com/v1",
+				"CODEX_MODEL":                  "qwen3-coder-next",
+				"CODEX_MODEL_REASONING_EFFORT": "xhigh",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, `model_reasoning_effort = "xhigh"`)
+		assert.Less(t, strings.Index(content, `model_reasoning_effort = "xhigh"`), strings.Index(content, "[model_providers.agentapi_openai_compatible]"))
 	})
 
 	t.Run("preserves existing model when model env is not set", func(t *testing.T) {

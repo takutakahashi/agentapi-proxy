@@ -623,6 +623,14 @@ func codexModelMetadataFromEnv(env map[string]string, modelConfigured bool) []st
 		metadata = append(metadata, fmt.Sprintf("model_supports_reasoning_summaries = %s", supportsReasoningSummaries))
 	}
 
+	reasoningEffort := strings.TrimSpace(env["CODEX_MODEL_REASONING_EFFORT"])
+	if reasoningEffort == "" {
+		reasoningEffort = strings.TrimSpace(env["OPENAI_MODEL_REASONING_EFFORT"])
+	}
+	if reasoningEffort != "" {
+		metadata = append(metadata, fmt.Sprintf("model_reasoning_effort = %s", tomlString(reasoningEffort)))
+	}
+
 	return metadata
 }
 
@@ -635,7 +643,7 @@ func appendCodexConfigSection(base string, section string) string {
 	if topLevelTOMLKeyIsSet(selector, "model") {
 		base = removeTopLevelTOMLKey(base, "model")
 	}
-	for _, key := range []string{"model_context_window", "model_auto_compact_token_limit", "model_supports_reasoning_summaries"} {
+	for _, key := range []string{"model_context_window", "model_auto_compact_token_limit", "model_supports_reasoning_summaries", "model_reasoning_effort"} {
 		if topLevelTOMLKeyIsSet(selector, key) {
 			base = removeTopLevelTOMLKey(base, key)
 		}
