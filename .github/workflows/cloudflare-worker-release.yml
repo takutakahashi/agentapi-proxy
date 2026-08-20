@@ -1,0 +1,23 @@
+name: Release Cloudflare Worker
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  trigger-workers-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Cloudflare Workers Build
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}
+        run: |
+          if [[ -z "$DEPLOY_HOOK_URL" ]]; then
+            echo "CLOUDFLARE_DEPLOY_HOOK_URL is not configured" >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --request POST "$DEPLOY_HOOK_URL"

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "hostname": { "type": "string", "minLength": 1 },
+    "cookieEncryptionSecret": {
+      "type": "object",
+      "required": ["enabled", "secretName", "secretKey"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "secretName": { "type": "string", "minLength": 1 },
+        "secretKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "publicUrl": { "type": "string" },
+        "proxyUrl": { "type": "string" }
+      }
+    }
+  }
+}

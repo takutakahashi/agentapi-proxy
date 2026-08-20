@@ -1,0 +1,1099 @@
+
+<!DOCTYPE HTML>
+<html lang="ja" >
+    <head>
+        <meta charset="UTF-8">
+        <title>演算子リファレンス · agentapi-ui ドキュメント</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="HonKit 6.1.4">
+        
+        
+        
+    
+    <link rel="stylesheet" href="../../gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../../gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="../../gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="signature.html" />
+    
+    
+    <link rel="prev" href="jsonpath.html" />
+    
+
+    </head>
+    <body>
+        
+<div class="book honkit-cloak">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="検索ワードを入力" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+
+    
+
+    
+        
+        <li class="header">はじめに</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="../../">
+            
+                <a href="../../">
+            
+                    
+                    agentapi-ui ドキュメント
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.2" data-path="../../getting-started/">
+            
+                <a href="../../getting-started/">
+            
+                    
+                    クイックスタート
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.3" data-path="../../getting-started/concepts.html">
+            
+                <a href="../../getting-started/concepts.html">
+            
+                    
+                    基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Webhook</li>
+        
+        
+    
+        <li class="chapter " data-level="2.1" data-path="../">
+            
+                <a href="../">
+            
+                    
+                    Webhook とは
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.1.1" data-path="../introduction/overview.html">
+            
+                <a href="../introduction/overview.html">
+            
+                    
+                    概要と基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.1.2" data-path="../introduction/agentapi-proxy.html">
+            
+                <a href="../introduction/agentapi-proxy.html">
+            
+                    
+                    agentapi-proxy における Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.2" data-path="../setup/">
+            
+                <a href="../setup/">
+            
+                    
+                    セットアップ
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="../github/">
+            
+                <a href="../github/">
+            
+                    
+                    GitHub Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4" data-path="./">
+            
+                <a href="./">
+            
+                    
+                    Custom Webhook
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.4.1" data-path="jsonpath.html">
+            
+                <a href="jsonpath.html">
+            
+                    
+                    JSONPath 条件の書き方
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter active" data-level="2.4.2" data-path="operators.html">
+            
+                <a href="operators.html">
+            
+                    
+                    演算子リファレンス
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.3" data-path="signature.html">
+            
+                <a href="signature.html">
+            
+                    
+                    署名検証の設定
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.5" data-path="../integrations/">
+            
+                <a href="../integrations/">
+            
+                    
+                    サービス連携例
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.6" data-path="../troubleshooting/">
+            
+                <a href="../troubleshooting/">
+            
+                    
+                    トラブルシューティング
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">API</li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" data-path="../../api/">
+            
+                <a href="../../api/">
+            
+                    
+                    API の概要
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.2" data-path="../../api/authentication.html">
+            
+                <a href="../../api/authentication.html">
+            
+                    
+                    認証
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.3" data-path="../../api/endpoints.html">
+            
+                <a href="../../api/endpoints.html">
+            
+                    
+                    エンドポイント
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">デプロイメント</li>
+        
+        
+    
+        <li class="chapter " data-level="4.1" data-path="../../deployment/">
+            
+                <a href="../../deployment/">
+            
+                    
+                    デプロイ方法
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="4.2" data-path="../../deployment/configuration.html">
+            
+                <a href="../../deployment/configuration.html">
+            
+                    
+                    設定ガイド
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">リファレンス</li>
+        
+        
+    
+        <li class="chapter " data-level="5.1" data-path="../../reference/glossary.html">
+            
+                <a href="../../reference/glossary.html">
+            
+                    
+                    用語集
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="5.2" data-path="../../reference/faq.html">
+            
+                <a href="../../reference/faq.html">
+            
+                    
+                    FAQ
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://github.com/honkit/honkit" target="blank" class="gitbook-link">
+            HonKitで公開 
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="../.." >演算子リファレンス</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h1 id="演算子リファレンス">演算子リファレンス</h1>
+<p>Custom Webhook の JSONPath 条件では、様々な演算子を使ってペイロードの値を評価できます。このページでは、すべての演算子の詳細と使用例を説明します。</p>
+<h2 id="演算子一覧">演算子一覧</h2>
+<table>
+<thead>
+<tr>
+<th>演算子</th>
+<th>説明</th>
+<th>対象型</th>
+<th>使用例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#eq-等価"><code>eq</code></a></td>
+<td>等しい</td>
+<td>すべて</td>
+<td>severity が "critical"</td>
+</tr>
+<tr>
+<td><a href="#ne-非等価"><code>ne</code></a></td>
+<td>等しくない</td>
+<td>すべて</td>
+<td>status が "resolved" でない</td>
+</tr>
+<tr>
+<td><a href="#gt-より大きい"><code>gt</code></a></td>
+<td>より大きい</td>
+<td>数値</td>
+<td>cpu_usage が 90 より大きい</td>
+</tr>
+<tr>
+<td><a href="#gte-以上"><code>gte</code></a></td>
+<td>以上</td>
+<td>数値</td>
+<td>memory_usage が 80 以上</td>
+</tr>
+<tr>
+<td><a href="#lt-より小さい"><code>lt</code></a></td>
+<td>より小さい</td>
+<td>数値</td>
+<td>latency が 100 より小さい</td>
+</tr>
+<tr>
+<td><a href="#lte-以下"><code>lte</code></a></td>
+<td>以下</td>
+<td>数値</td>
+<td>error_rate が 5 以下</td>
+</tr>
+<tr>
+<td><a href="#contains-含む"><code>contains</code></a></td>
+<td>含む</td>
+<td>文字列, 配列</td>
+<td>tags に "production" が含まれる</td>
+</tr>
+<tr>
+<td><a href="#matches-正規表現マッチ"><code>matches</code></a></td>
+<td>正規表現マッチ</td>
+<td>文字列</td>
+<td>service 名が "api-" で始まる</td>
+</tr>
+<tr>
+<td><a href="#in-いずれかに一致"><code>in</code></a></td>
+<td>いずれかに一致</td>
+<td>すべて</td>
+<td>env が ["prod", "stage"] のいずれか</td>
+</tr>
+<tr>
+<td><a href="#exists-存在チェック"><code>exists</code></a></td>
+<td>存在する</td>
+<td>すべて</td>
+<td>error フィールドが存在する</td>
+</tr>
+</tbody>
+</table>
+<h2 id="eq-等価">eq (等価)</h2>
+<p>値が指定した値と等しいかをチェックします。</p>
+<h3 id="文字列の等価">文字列の等価</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"event"</span>: {<span class="hljs-string">"type"</span>: <span class="hljs-string">"alert"</span>}}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"event"</span>: {<span class="hljs-string">"type"</span>: <span class="hljs-string">"warning"</span>}}
+</code></pre>
+<h3 id="数値の等価">数値の等価</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.status_code"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-number">200</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"status_code"</span>: <span class="hljs-number">200</span>}
+</code></pre>
+<h3 id="ブール値の等価">ブール値の等価</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.is_critical"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"is_critical"</span>: <span class="hljs-literal">true</span>}
+</code></pre>
+<h2 id="ne-非等価">ne (非等価)</h2>
+<p>値が指定した値と等しくないかをチェックします。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.status"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"ne"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"resolved"</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"status"</span>: <span class="hljs-string">"triggered"</span>}
+{<span class="hljs-string">"status"</span>: <span class="hljs-string">"acknowledged"</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"status"</span>: <span class="hljs-string">"resolved"</span>}
+</code></pre>
+<h3 id="ユースケース">ユースケース</h3>
+<p><strong>「エラー以外を除外」</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.log_level"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"ne"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"DEBUG"</span>
+}
+</code></pre>
+<h2 id="gt-より大きい">gt (より大きい)</h2>
+<p>数値が指定した値より大きいかをチェックします。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.metrics.cpu_usage"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gt"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-number">90</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"cpu_usage"</span>: <span class="hljs-number">95</span>}}
+{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"cpu_usage"</span>: <span class="hljs-number">90.1</span>}}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"cpu_usage"</span>: <span class="hljs-number">90</span>}}
+{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"cpu_usage"</span>: <span class="hljs-number">85</span>}}
+</code></pre>
+<h3 id="浮動小数点数">浮動小数点数</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.response_time"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gt"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-number">0.5</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"response_time"</span>: <span class="hljs-number">1.2</span>}
+{<span class="hljs-string">"response_time"</span>: <span class="hljs-number">0.51</span>}
+</code></pre>
+<h2 id="gte-以上">gte (以上)</h2>
+<p>数値が指定した値以上かをチェックします。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.metrics.memory_usage"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gte"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-number">80</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"memory_usage"</span>: <span class="hljs-number">80</span>}}
+{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"memory_usage"</span>: <span class="hljs-number">85</span>}}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"metrics"</span>: {<span class="hljs-string">"memory_usage"</span>: <span class="hljs-number">79</span>}}
+</code></pre>
+<h2 id="lt-より小さい">lt (より小さい)</h2>
+<p>数値が指定した値より小さいかをチェックします。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.latency_ms"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"lt"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-number">100</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"latency_ms"</span>: <span class="hljs-number">50</span>}
+{<span class="hljs-string">"latency_ms"</span>: <span class="hljs-number">99</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"latency_ms"</span>: <span class="hljs-number">100</span>}
+{<span class="hljs-string">"latency_ms"</span>: <span class="hljs-number">150</span>}
+</code></pre>
+<h2 id="lte-以下">lte (以下)</h2>
+<p>数値が指定した値以下かをチェックします。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error_count"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"lte"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-number">5</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"error_count"</span>: <span class="hljs-number">5</span>}
+{<span class="hljs-string">"error_count"</span>: <span class="hljs-number">3</span>}
+{<span class="hljs-string">"error_count"</span>: <span class="hljs-number">0</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"error_count"</span>: <span class="hljs-number">6</span>}
+</code></pre>
+<h2 id="contains-含む">contains (含む)</h2>
+<p>文字列または配列に指定した値が含まれるかをチェックします。</p>
+<h3 id="配列に文字列が含まれる">配列に文字列が含まれる</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"tags"</span>: [<span class="hljs-string">"production"</span>, <span class="hljs-string">"critical"</span>]}
+{<span class="hljs-string">"tags"</span>: [<span class="hljs-string">"production"</span>]}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"tags"</span>: [<span class="hljs-string">"development"</span>]}
+{<span class="hljs-string">"tags"</span>: []}
+</code></pre>
+<h3 id="文字列に部分文字列が含まれる">文字列に部分文字列が含まれる</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.message"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"error"</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"message"</span>: <span class="hljs-string">"An error occurred"</span>}
+{<span class="hljs-string">"message"</span>: <span class="hljs-string">"error: connection failed"</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"message"</span>: <span class="hljs-string">"Success"</span>}
+</code></pre>
+<h3 id="ケーススタディ-タグフィルタリング">ケーススタディ: タグフィルタリング</h3>
+<p>Datadog のタグをフィルタリングする場合：</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"env:production"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"service:api"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"tags"</span>: [<span class="hljs-string">"env:production"</span>, <span class="hljs-string">"service:api"</span>, <span class="hljs-string">"region:us-east-1"</span>]
+}
+</code></pre>
+<h2 id="matches-正規表現マッチ">matches (正規表現マッチ)</h2>
+<p>文字列が指定した正規表現パターンにマッチするかをチェックします。</p>
+<h3 id="基本的な使い方">基本的な使い方</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.service.name"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"^api-.*"</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"service"</span>: {<span class="hljs-string">"name"</span>: <span class="hljs-string">"api-server"</span>}}
+{<span class="hljs-string">"service"</span>: {<span class="hljs-string">"name"</span>: <span class="hljs-string">"api-gateway"</span>}}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"service"</span>: {<span class="hljs-string">"name"</span>: <span class="hljs-string">"web-server"</span>}}
+</code></pre>
+<h3 id="よく使うパターン">よく使うパターン</h3>
+<p><strong>プレフィックスマッチ</strong> (<code>^</code> で始まる):</p>
+<pre><code class="lang-json">{<span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"^api-"</span>}
+</code></pre>
+<p><strong>サフィックスマッチ</strong> (<code>$</code> で終わる):</p>
+<pre><code class="lang-json">{<span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"-prod$"</span>}
+</code></pre>
+<p><strong>いずれかの単語</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"^(api|web|db)-server$"</span>}
+</code></pre>
+<p><strong>メールアドレス</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"</span>}
+</code></pre>
+<p><strong>バージョン番号</strong> (v1.2.3 形式):</p>
+<pre><code class="lang-json">{<span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"^v\\d+\\.\\d+\\.\\d+$"</span>}
+</code></pre>
+<h3 id="実践例-ブランチ名のフィルタリング">実践例: ブランチ名のフィルタリング</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.ref"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">"^refs/heads/(main|master|develop)$"</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"ref"</span>: <span class="hljs-string">"refs/heads/main"</span>}
+{<span class="hljs-string">"ref"</span>: <span class="hljs-string">"refs/heads/develop"</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"ref"</span>: <span class="hljs-string">"refs/heads/feature/new-feature"</span>}
+</code></pre>
+<h2 id="in-いずれかに一致">in (いずれかに一致)</h2>
+<p>値が指定した配列のいずれかに含まれるかをチェックします。</p>
+<h3 id="文字列のチェック">文字列のチェック</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.environment"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+  <span class="hljs-string">"value"</span>: [<span class="hljs-string">"production"</span>, <span class="hljs-string">"staging"</span>]
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"environment"</span>: <span class="hljs-string">"production"</span>}
+{<span class="hljs-string">"environment"</span>: <span class="hljs-string">"staging"</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"environment"</span>: <span class="hljs-string">"development"</span>}
+</code></pre>
+<h3 id="数値のチェック">数値のチェック</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.http_status"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+  <span class="hljs-string">"value"</span>: [<span class="hljs-number">500</span>, <span class="hljs-number">502</span>, <span class="hljs-number">503</span>, <span class="hljs-number">504</span>]
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"http_status"</span>: <span class="hljs-number">500</span>}
+{<span class="hljs-string">"http_status"</span>: <span class="hljs-number">503</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"http_status"</span>: <span class="hljs-number">200</span>}
+{<span class="hljs-string">"http_status"</span>: <span class="hljs-number">404</span>}
+</code></pre>
+<h3 id="ユースケース-複数の-severity-レベル">ユースケース: 複数の severity レベル</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+  <span class="hljs-string">"value"</span>: [<span class="hljs-string">"critical"</span>, <span class="hljs-string">"high"</span>, <span class="hljs-string">"urgent"</span>]
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"severity"</span>: <span class="hljs-string">"critical"</span>}
+{<span class="hljs-string">"severity"</span>: <span class="hljs-string">"high"</span>}
+</code></pre>
+<h2 id="exists-存在チェック">exists (存在チェック)</h2>
+<p>指定したパスが存在するかをチェックします。</p>
+<h3 id="フィールドが存在する">フィールドが存在する</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"error"</span>: {<span class="hljs-string">"code"</span>: <span class="hljs-number">500</span>}}
+{<span class="hljs-string">"error"</span>: <span class="hljs-literal">null</span>}
+{<span class="hljs-string">"error"</span>: <span class="hljs-string">""</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{}
+{<span class="hljs-string">"message"</span>: <span class="hljs-string">"success"</span>}
+</code></pre>
+<h3 id="フィールドが存在しない">フィールドが存在しない</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-literal">false</span>
+}
+</code></pre>
+<p><strong>マッチ</strong>:</p>
+<pre><code class="lang-json">{}
+{<span class="hljs-string">"message"</span>: <span class="hljs-string">"success"</span>}
+</code></pre>
+<p><strong>マッチしない</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"error"</span>: {<span class="hljs-string">"code"</span>: <span class="hljs-number">500</span>}}
+</code></pre>
+<h3 id="ユースケース-エラーハンドリング">ユースケース: エラーハンドリング</h3>
+<p>エラーが存在する場合のみトリガー：</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error.code"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"CRITICAL"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<h2 id="組み合わせ例">組み合わせ例</h2>
+<h3 id="例-1-重大なアラートのフィルタリング">例 1: 重大なアラートのフィルタリング</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.alert_type"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"metric_alert"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+        <span class="hljs-string">"value"</span>: [<span class="hljs-string">"critical"</span>, <span class="hljs-string">"high"</span>]
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.current_value"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gt"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-number">90</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"env:production"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<h3 id="例-2-デプロイメント通知">例 2: デプロイメント通知</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"deployment"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.deployment.status"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+        <span class="hljs-string">"value"</span>: [<span class="hljs-string">"succeeded"</span>, <span class="hljs-string">"failed"</span>]
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.deployment.environment"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"^(production|staging)$"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<h3 id="例-3-エラー率の監視">例 3: エラー率の監視</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.metric.name"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"error_rate"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.current_value"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gte"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-number">5.0</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.duration"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gte"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-number">300</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<h2 id="パフォーマンスのヒント">パフォーマンスのヒント</h2>
+<h3 id="1-早期終了を活用">1. 早期終了を活用</h3>
+<p>最も制限的な条件を最初に配置すると、不要な評価を避けられます。</p>
+<p>✅ <strong>良い例</strong>:</p>
+<pre><code class="lang-json">[
+  {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"critical"</span>},
+  {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>}
+]
+</code></pre>
+<p>❌ <strong>悪い例</strong>:</p>
+<pre><code class="lang-json">[
+  {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>},
+  {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"critical"</span>}
+]
+</code></pre>
+<h3 id="2-簡単な演算子を優先">2. 簡単な演算子を優先</h3>
+<p><code>eq</code> や <code>in</code> は <code>matches</code> より高速です。可能な限り単純な演算子を使いましょう。</p>
+<p>✅ <strong>良い例</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.env"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>, <span class="hljs-string">"value"</span>: [<span class="hljs-string">"prod"</span>, <span class="hljs-string">"stage"</span>]}
+</code></pre>
+<p>❌ <strong>悪い例</strong>:</p>
+<pre><code class="lang-json">{<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.env"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"^(prod|stage)$"</span>}
+</code></pre>
+<h2 id="トラブルシューティング">トラブルシューティング</h2>
+<h3 id="問題-1-条件がマッチしない">問題 1: 条件がマッチしない</h3>
+<p><strong>チェックポイント</strong>:</p>
+<ol>
+<li>JSONPath が正しいか（<code>$.path.to.field</code>）</li>
+<li>型が一致しているか（文字列 vs 数値）</li>
+<li>大文字小文字が一致しているか</li>
+</ol>
+<h3 id="問題-2-正規表現がマッチしない">問題 2: 正規表現がマッチしない</h3>
+<p><strong>チェックポイント</strong>:</p>
+<ol>
+<li>エスケープが正しいか（<code>\.</code> や <code>\\d</code>）</li>
+<li>アンカー（<code>^</code> と <code>$</code>）が適切か</li>
+<li>オンラインツールでテスト（regex101.com など）</li>
+</ol>
+<h3 id="問題-3-配列チェックが動作しない">問題 3: 配列チェックが動作しない</h3>
+<p><strong>チェックポイント</strong>:</p>
+<ol>
+<li><code>contains</code> を使っているか（<code>eq</code> ではなく）</li>
+<li>配列要素の型が一致しているか</li>
+<li>空配列を考慮しているか</li>
+</ol>
+<h2 id="まとめ">まとめ</h2>
+<p>演算子を適切に使い分けることで、様々なペイロード構造に柔軟に対応できます。基本的な <code>eq</code> から始めて、必要に応じて <code>matches</code> や <code>in</code> などの高度な演算子を使いましょう。</p>
+<h2 id="関連ページ">関連ページ</h2>
+<ul>
+<li><a href="jsonpath.html">JSONPath 条件の書き方</a> - JSONPath の基礎</li>
+<li><a href="signature.html">署名検証の設定</a> - セキュリティ設定</li>
+<li><a href="../integrations/">実用例集</a> - サービスごとの設定例</li>
+</ul>
+
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="jsonpath.html" class="navigation navigation-prev " aria-label="Previous page: JSONPath 条件の書き方">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="signature.html" class="navigation navigation-next " aria-label="Next page: 署名検証の設定">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"演算子リファレンス","level":"2.4.2","depth":2,"next":{"title":"署名検証の設定","level":"2.4.3","depth":2,"path":"webhook/custom/signature.md","ref":"webhook/custom/signature.md","articles":[]},"previous":{"title":"JSONPath 条件の書き方","level":"2.4.1","depth":2,"path":"webhook/custom/jsonpath.md","ref":"webhook/custom/jsonpath.md","articles":[]},"dir":"ltr"},"config":{"plugins":[],"root":".","styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"pluginsConfig":{"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56},"embedFonts":false},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"title":"agentapi-ui ドキュメント","language":"ja","gitbook":"3.2.3","description":"agentapi-ui の完全なドキュメント"},"file":{"path":"webhook/custom/operators.md","mtime":"2026-01-12T08:07:41.945Z","type":"markdown"},"gitbook":{"version":"6.1.4","time":"2026-01-12T08:15:40.503Z"},"basePath":"../..","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <noscript>
+        <style>
+            .honkit-cloak {
+                display: block !important;
+            }
+        </style>
+    </noscript>
+    <script>
+        // Restore sidebar state as critical path for prevent layout shift
+        function __init__getSidebarState(defaultValue){
+            var baseKey = "";
+            var key = baseKey + ":sidebar";
+            try {
+                var value = localStorage[key];
+                if (value === undefined) {
+                    return defaultValue;
+                }
+                var parsed = JSON.parse(value);
+                return parsed == null ? defaultValue : parsed;
+            } catch (e) {
+                return defaultValue;
+            }
+        }
+        function __init__restoreLastSidebarState() {
+            var isMobile = window.matchMedia("(max-width: 600px)").matches;
+            if (isMobile) {
+                // Init last state if not mobile
+                return;
+            }
+            var sidebarState = __init__getSidebarState(true);
+            var book = document.querySelector(".book");
+            // Show sidebar if it enabled
+            if (sidebarState && book) {
+                book.classList.add("without-animation", "with-summary");
+            }
+        }
+
+        try {
+            __init__restoreLastSidebarState();
+        } finally {
+            var book = document.querySelector(".book");
+            book.classList.remove("honkit-cloak");
+        }
+    </script>
+    <script src="../../gitbook/gitbook.js"></script>
+    <script src="../../gitbook/theme.js"></script>
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="../../gitbook/@honkit/honkit-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+

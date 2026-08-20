@@ -1,0 +1,761 @@
+
+<!DOCTYPE HTML>
+<html lang="ja" >
+    <head>
+        <meta charset="UTF-8">
+        <title>agentapi-proxy における Webhook · agentapi-ui ドキュメント</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="HonKit 6.1.4">
+        
+        
+        
+    
+    <link rel="stylesheet" href="../../gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../../gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="../../gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="../setup/" />
+    
+    
+    <link rel="prev" href="overview.html" />
+    
+
+    </head>
+    <body>
+        
+<div class="book honkit-cloak">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="検索ワードを入力" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+
+    
+
+    
+        
+        <li class="header">はじめに</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="../../">
+            
+                <a href="../../">
+            
+                    
+                    agentapi-ui ドキュメント
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.2" data-path="../../getting-started/">
+            
+                <a href="../../getting-started/">
+            
+                    
+                    クイックスタート
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.3" data-path="../../getting-started/concepts.html">
+            
+                <a href="../../getting-started/concepts.html">
+            
+                    
+                    基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Webhook</li>
+        
+        
+    
+        <li class="chapter " data-level="2.1" data-path="../">
+            
+                <a href="../">
+            
+                    
+                    Webhook とは
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.1.1" data-path="overview.html">
+            
+                <a href="overview.html">
+            
+                    
+                    概要と基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter active" data-level="2.1.2" data-path="agentapi-proxy.html">
+            
+                <a href="agentapi-proxy.html">
+            
+                    
+                    agentapi-proxy における Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.2" data-path="../setup/">
+            
+                <a href="../setup/">
+            
+                    
+                    セットアップ
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="../github/">
+            
+                <a href="../github/">
+            
+                    
+                    GitHub Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4" data-path="../custom/">
+            
+                <a href="../custom/">
+            
+                    
+                    Custom Webhook
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.4.1" data-path="../custom/jsonpath.html">
+            
+                <a href="../custom/jsonpath.html">
+            
+                    
+                    JSONPath 条件の書き方
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.2" data-path="../custom/operators.html">
+            
+                <a href="../custom/operators.html">
+            
+                    
+                    演算子リファレンス
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.3" data-path="../custom/signature.html">
+            
+                <a href="../custom/signature.html">
+            
+                    
+                    署名検証の設定
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.5" data-path="../integrations/">
+            
+                <a href="../integrations/">
+            
+                    
+                    サービス連携例
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.6" data-path="../troubleshooting/">
+            
+                <a href="../troubleshooting/">
+            
+                    
+                    トラブルシューティング
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">API</li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" data-path="../../api/">
+            
+                <a href="../../api/">
+            
+                    
+                    API の概要
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.2" data-path="../../api/authentication.html">
+            
+                <a href="../../api/authentication.html">
+            
+                    
+                    認証
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.3" data-path="../../api/endpoints.html">
+            
+                <a href="../../api/endpoints.html">
+            
+                    
+                    エンドポイント
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">デプロイメント</li>
+        
+        
+    
+        <li class="chapter " data-level="4.1" data-path="../../deployment/">
+            
+                <a href="../../deployment/">
+            
+                    
+                    デプロイ方法
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="4.2" data-path="../../deployment/configuration.html">
+            
+                <a href="../../deployment/configuration.html">
+            
+                    
+                    設定ガイド
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">リファレンス</li>
+        
+        
+    
+        <li class="chapter " data-level="5.1" data-path="../../reference/glossary.html">
+            
+                <a href="../../reference/glossary.html">
+            
+                    
+                    用語集
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="5.2" data-path="../../reference/faq.html">
+            
+                <a href="../../reference/faq.html">
+            
+                    
+                    FAQ
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://github.com/honkit/honkit" target="blank" class="gitbook-link">
+            HonKitで公開 
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="../.." >agentapi-proxy における Webhook</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h1 id="agentapi-proxy-における-webhook">agentapi-proxy における Webhook</h1>
+<p>agentapi-proxy は、Webhook を AI エージェントと連携させるための強力なプラットフォームです。外部サービスからのイベントを受け取り、自動的に AI エージェントとのセッションを開始できます。</p>
+<h2 id="agentapi-proxy-の役割">agentapi-proxy の役割</h2>
+<pre><code>┌──────────────┐
+│ 外部サービス  │ (GitHub, Slack, Datadog など)
+└──────┬───────┘
+       │ Webhook POST
+       ↓
+┌──────────────────────────────┐
+│    agentapi-proxy            │
+├──────────────────────────────┤
+│ 1. 署名検証                   │
+│ 2. トリガー条件の評価          │
+│ 3. セッション作成              │
+│ 4. 初期メッセージ生成          │
+└──────┬───────────────────────┘
+       │
+       ↓
+┌──────────────┐
+│ AI エージェント │ (Claude など)
+└──────────────┘
+</code></pre><h2 id="主な機能">主な機能</h2>
+<h3 id="1-マルチソース対応">1. マルチソース対応</h3>
+<p>agentapi-proxy は、様々な Webhook ソースに対応しています。</p>
+<h4 id="github-webhook">GitHub Webhook</h4>
+<ul>
+<li>プッシュイベント</li>
+<li>プルリクエスト</li>
+<li>イシューの作成・更新</li>
+<li>リリース</li>
+<li>その他多数のイベント</li>
+</ul>
+<h4 id="custom-webhook">Custom Webhook</h4>
+<p>JSONPath を使った柔軟な条件設定により、任意のサービスと連携可能：</p>
+<ul>
+<li>Slack</li>
+<li>Datadog</li>
+<li>PagerDuty</li>
+<li>カスタムサービス</li>
+</ul>
+<h3 id="2-条件ベースのトリガー">2. 条件ベースのトリガー</h3>
+<p>特定の条件を満たした場合のみ、セッションを開始できます。</p>
+<p><strong>例: GitHub Webhook</strong></p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"github"</span>: {
+      <span class="hljs-string">"events"</span>: [<span class="hljs-string">"pull_request"</span>],
+      <span class="hljs-string">"actions"</span>: [<span class="hljs-string">"opened"</span>],
+      <span class="hljs-string">"branches"</span>: [<span class="hljs-string">"main"</span>, <span class="hljs-string">"develop"</span>]
+    }
+  }
+}
+</code></pre>
+<p><strong>例: Custom Webhook</strong></p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"critical"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.environment"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<h3 id="3-初期メッセージのカスタマイズ">3. 初期メッセージのカスタマイズ</h3>
+<p>Go テンプレートを使って、ペイロードから情報を抽出し、AI エージェントへの初期メッセージを生成できます。</p>
+<pre><code class="lang-go">Critical alert detected!
+
+Severity: {{.severity}}
+Environment: {{.environment}}
+Service: {{.service.name}}
+Message: {{.message}}
+
+Please investigate and provide recommendations.
+</code></pre>
+<h3 id="4-セキュリティ">4. セキュリティ</h3>
+<ul>
+<li><strong>HMAC 署名検証</strong>: リクエストが正当なソースから送信されたことを確認</li>
+<li><strong>Secret 管理</strong>: Kubernetes Secret を使った安全な認証情報の管理</li>
+<li><strong>ユーザー/チームスコープ</strong>: アクセス制御とマルチテナント対応</li>
+</ul>
+<h3 id="5-配信記録（delivery-record）">5. 配信記録（Delivery Record）</h3>
+<p>すべての Webhook リクエストの履歴を記録し、デバッグやトラブルシューティングに活用できます。</p>
+<ul>
+<li>リクエストのペイロード</li>
+<li>レスポンスステータス</li>
+<li>マッチしたトリガー</li>
+<li>作成されたセッション情報</li>
+</ul>
+<h2 id="ユースケース">ユースケース</h2>
+<h3 id="1-コードレビューの自動化">1. コードレビューの自動化</h3>
+<p>プルリクエストが作成されたら、AI エージェントが自動的にコードレビューを開始。</p>
+<pre><code>GitHub PR 作成 → Webhook → agentapi-proxy → AI レビュー開始
+</code></pre><h3 id="2-インシデント対応">2. インシデント対応</h3>
+<p>重大なエラーが発生したら、AI エージェントが原因調査と対応策を提案。</p>
+<pre><code>Datadog アラート → Webhook → agentapi-proxy → AI 分析開始
+</code></pre><h3 id="3-デプロイメント通知">3. デプロイメント通知</h3>
+<p>デプロイが完了したら、変更内容をまとめて関係者に通知。</p>
+<pre><code>デプロイ完了 → Webhook → agentapi-proxy → AI サマリー作成
+</code></pre><h3 id="4-チケット自動トリアージ">4. チケット自動トリアージ</h3>
+<p>新しいイシューが作成されたら、AI が自動的に分類とラベル付けを実行。</p>
+<pre><code>GitHub Issue 作成 → Webhook → agentapi-proxy → AI トリアージ
+</code></pre><h2 id="アーキテクチャの特徴">アーキテクチャの特徴</h2>
+<h3 id="クリーンアーキテクチャ">クリーンアーキテクチャ</h3>
+<p>agentapi-proxy は、レイヤー化されたクリーンアーキテクチャを採用しています。</p>
+<pre><code>┌─────────────────────────────────┐
+│  Interface Layer                │
+│  - WebhookGitHubController      │
+│  - WebhookCustomController      │
+└────────────┬────────────────────┘
+             │
+┌────────────▼────────────────────┐
+│  Domain Layer                   │
+│  - Webhook Entity               │
+│  - Trigger Conditions           │
+│  - Session Config               │
+└────────────┬────────────────────┘
+             │
+┌────────────▼────────────────────┐
+│  Infrastructure Layer           │
+│  - WebhookRepository            │
+│  - SessionManager               │
+│  - SignatureVerifier            │
+│  - JSONPathEvaluator            │
+└─────────────────────────────────┘
+</code></pre><h3 id="スケーラビリティ">スケーラビリティ</h3>
+<ul>
+<li>Kubernetes ネイティブ</li>
+<li>水平スケーリング対応</li>
+<li>Secret ベースの設定管理</li>
+</ul>
+<h3 id="拡張性">拡張性</h3>
+<ul>
+<li>新しい Webhook ソースを簡単に追加</li>
+<li>カスタム条件演算子の実装が容易</li>
+<li>プラグイン可能なアーキテクチャ</li>
+</ul>
+<h2 id="webhook-のライフサイクル">Webhook のライフサイクル</h2>
+<pre><code>1. 作成 (Create)
+   ↓
+   - Webhook URL が生成される
+   - Secret が発行される
+   - トリガー条件を設定
+
+2. 設定 (Configure)
+   ↓
+   - 外部サービスに Webhook URL を登録
+   - Secret を設定
+
+3. 受信 (Receive)
+   ↓
+   - イベント発生
+   - agentapi-proxy がリクエストを受信
+
+4. 検証 (Verify)
+   ↓
+   - 署名を検証
+   - ペイロードを解析
+
+5. 評価 (Evaluate)
+   ↓
+   - トリガー条件をチェック
+   - マッチするトリガーを特定
+
+6. 実行 (Execute)
+   ↓
+   - セッションを作成
+   - 初期メッセージを生成
+   - AI エージェントに送信
+
+7. 記録 (Record)
+   ↓
+   - Delivery Record を保存
+   - メトリクスを更新
+</code></pre><h2 id="次のステップ">次のステップ</h2>
+<p>基本的な概念を理解したら、実際に Webhook を作成してみましょう。</p>
+<ul>
+<li><a href="../setup/">Webhook の作成</a> - セットアップの基本</li>
+<li><a href="../github/">GitHub との連携</a> - GitHub Webhook の詳細</li>
+<li><a href="../custom/">カスタム Webhook</a> - 任意のサービスとの連携</li>
+</ul>
+<h2 id="まとめ">まとめ</h2>
+<p>agentapi-proxy は、Webhook と AI エージェントを橋渡しする強力なプラットフォームです。様々な外部サービスからのイベントを受け取り、条件に基づいて自動的に AI エージェントとのセッションを開始できます。</p>
+<p>次のセクションでは、実際に Webhook を作成する手順を見ていきましょう。</p>
+
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="overview.html" class="navigation navigation-prev " aria-label="Previous page: 概要と基本概念">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="../setup/" class="navigation navigation-next " aria-label="Next page: セットアップ">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"agentapi-proxy における Webhook","level":"2.1.2","depth":2,"next":{"title":"セットアップ","level":"2.2","depth":1,"path":"webhook/setup/README.md","ref":"webhook/setup/README.md","articles":[]},"previous":{"title":"概要と基本概念","level":"2.1.1","depth":2,"path":"webhook/introduction/overview.md","ref":"webhook/introduction/overview.md","articles":[]},"dir":"ltr"},"config":{"plugins":[],"root":".","styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"pluginsConfig":{"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56},"embedFonts":false},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"title":"agentapi-ui ドキュメント","language":"ja","gitbook":"3.2.3","description":"agentapi-ui の完全なドキュメント"},"file":{"path":"webhook/introduction/agentapi-proxy.md","mtime":"2026-01-12T08:05:12.754Z","type":"markdown"},"gitbook":{"version":"6.1.4","time":"2026-01-12T08:15:40.503Z"},"basePath":"../..","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <noscript>
+        <style>
+            .honkit-cloak {
+                display: block !important;
+            }
+        </style>
+    </noscript>
+    <script>
+        // Restore sidebar state as critical path for prevent layout shift
+        function __init__getSidebarState(defaultValue){
+            var baseKey = "";
+            var key = baseKey + ":sidebar";
+            try {
+                var value = localStorage[key];
+                if (value === undefined) {
+                    return defaultValue;
+                }
+                var parsed = JSON.parse(value);
+                return parsed == null ? defaultValue : parsed;
+            } catch (e) {
+                return defaultValue;
+            }
+        }
+        function __init__restoreLastSidebarState() {
+            var isMobile = window.matchMedia("(max-width: 600px)").matches;
+            if (isMobile) {
+                // Init last state if not mobile
+                return;
+            }
+            var sidebarState = __init__getSidebarState(true);
+            var book = document.querySelector(".book");
+            // Show sidebar if it enabled
+            if (sidebarState && book) {
+                book.classList.add("without-animation", "with-summary");
+            }
+        }
+
+        try {
+            __init__restoreLastSidebarState();
+        } finally {
+            var book = document.querySelector(".book");
+            book.classList.remove("honkit-cloak");
+        }
+    </script>
+    <script src="../../gitbook/gitbook.js"></script>
+    <script src="../../gitbook/theme.js"></script>
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="../../gitbook/@honkit/honkit-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+

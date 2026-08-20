@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-ui.fullname" . }}
+  labels:
+    {{- include "agentapi-ui.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-ui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "agentapi-ui.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "agentapi-ui.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- end }}
+          env:
+          {{- if .Values.cookieEncryptionSecret.enabled }}
+            - name: COOKIE_ENCRYPTION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cookieEncryptionSecret.secretName }}
+                  key: {{ .Values.cookieEncryptionSecret.secretKey }}
+            - name: COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cookieEncryptionSecret.secretName }}
+                  key: {{ .Values.cookieEncryptionSecret.secretKey }}
+          {{- end }}
+          {{- $proxyUrl := "" }}
+          {{- $values := .Values | toJson | fromJson }}
+		  {{- if .Values.config.proxyUrl }}
+		    {{- $proxyUrl = .Values.config.proxyUrl }}
+		  {{- else }}
+            {{- $proxyUrl = printf "http://%s-backend:8080" .Release.Name }}
+          {{- end }}
+          {{- if $proxyUrl }}
+            - name: AGENTAPI_PROXY_URL
+              value: {{ $proxyUrl | quote }}
+          {{- end }}
+            {{- $hostname := "" }}
+            {{- if .Values.global }}
+              {{- $hostname = .Values.global.hostname | default .Values.hostname }}
+            {{- else }}
+              {{- $hostname = .Values.hostname }}
+            {{- end }}
+            {{- $tlsEnabled := false }}
+            {{- if .Values.ingress.tls }}
+              {{- $tlsEnabled = true }}
+            {{- else if and .Values.global .Values.global.ingress .Values.global.ingress.tls }}
+              {{- $tlsEnabled = .Values.global.ingress.tls.enabled | default false }}
+            {{- end }}
+            {{- $scheme := ternary "https" "http" $tlsEnabled }}
+            {{- $publicUrl := .Values.config.publicUrl | default (printf "%s://%s" $scheme $hostname) }}
+            - name: ALLOWED_ORIGINS
+              value: {{ $publicUrl | quote }}
+            - name: NEXT_PUBLIC_BASE_URL
+              value: {{ $publicUrl | quote }}
+            # Application configuration (runtime settings)
+            - name: LOGIN_TITLE
+              value: {{ .Values.config.loginTitle | quote }}
+            - name: LOGIN_DESCRIPTION
+              value: {{ .Values.config.loginDescription | quote }}
+            - name: LOGIN_SUB_DESCRIPTION
+              value: {{ .Values.config.loginSubDescription | quote }}
+            {{- if .Values.config.faviconUrl }}
+            - name: FAVICON_URL
+              value: {{ .Values.config.faviconUrl | quote }}
+            {{- end }}
+            # PWA configuration
+            {{- if .Values.pwa }}
+            - name: PWA_APP_NAME
+              value: {{ .Values.pwa.appName | default "AgentAPI UI" | quote }}
+            - name: PWA_SHORT_NAME
+              value: {{ .Values.pwa.shortName | default "AgentAPI" | quote }}
+            - name: PWA_DESCRIPTION
+              value: {{ .Values.pwa.description | default "AgentAPI UI" | quote }}
+            {{- if .Values.pwa.iconUrl }}
+            - name: PWA_ICON_URL
+              value: {{ .Values.pwa.iconUrl | quote }}
+            {{- end }}
+            {{- end }}
+          {{- if .Values.env }}
+            {{- toYaml .Values.env | nindent 12 }}
+          {{- end }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

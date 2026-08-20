@@ -1,0 +1,17 @@
+{{- $api := .Values.api | default dict -}}
+{{- $worker := .Values.worker | default dict -}}
+{{- $apiKubernetes := eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes" -}}
+{{- $workerKubernetes := and ($worker.enabled | default false) (eq (dig "backend" "" ($worker.kvStore | default dict)) "kubernetes") -}}
+{{- if or $apiKubernetes $workerKubernetes }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-kvstore
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kvstore
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]
+{{- end }}

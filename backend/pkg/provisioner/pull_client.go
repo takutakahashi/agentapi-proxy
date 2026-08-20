@@ -1,0 +1,348 @@
+package provisioner
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+)
+
+type PullClientConfig struct {
+	ProxyURL            string
+	Token               string
+	SessionControlToken string
+	UpstreamAuthToken   string
+	SessionID           string
+	PodName             string
+	Namespace           string
+	CAFile              string
+	RunnerPool          string
+	RunnerID            string
+	RunnerToken         string
+}
+
+type pullProvisionRequest struct {
+	RequestID string                           `json:"request_id"`
+	Type      string                           `json:"type"`
+	Settings  *sessionsettings.SessionSettings `json:"settings"`
+}
+
+// RunPullClient connects this session Pod to the proxy and claims provision requests.
+func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error {
+	cfg.ProxyURL = strings.TrimRight(cfg.ProxyURL, "/")
+	if cfg.PodName == "" {
+		cfg.PodName, _ = os.Hostname()
+	}
+	if cfg.ProxyURL == "" || cfg.Token == "" || cfg.SessionID == "" {
+		return fmt.Errorf("pull provisioner requires proxy URL, token, and session ID")
+	}
+	client, err := newPullHTTPClient(ctx, cfg.CAFile)
+	if err != nil {
+		return err
+	}
+	if cfg.RunnerPool != "" {
+		return runRunnerClaimClient(ctx, srv, client, cfg)
+	}
+	if err := postJSON(ctx, client, cfg, "/internal/session-provisioners/connect", map[string]interface{}{
+		"session_id": cfg.SessionID,
+		"pod_name":   cfg.PodName,
+		"namespace":  cfg.Namespace,
+	}); err != nil {
+		log.Printf("[PROVISIONER] Initial connect failed: %v", err)
+	}
+	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") && cfg.SessionControlToken != "" {
+		go runSessionControlClient(ctx, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		provisionReq, ok, err := pollProvisionRequest(ctx, client, cfg)
+		if err != nil {
+			log.Printf("[PROVISIONER] Failed to poll provision request: %v", err)
+			sleepOrDone(ctx, 5*time.Second)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if provisionReq.Settings == nil {
+			_ = reportProvisionRequestStatus(ctx, client, cfg, provisionReq.RequestID, StatusError, "provision request has no settings")
+			continue
+		}
+		if runtime := provisionReq.Settings.ParentRuntime; runtime != nil && runtime.Enabled {
+			go runDirectRuntimeClient(ctx, client.Transport, runtime, cfg.PodName)
+		}
+
+		srv.SetStatusReporter(func(st Status, msg string) {
+			go func() {
+				if err := reportProvisionRequestStatusWithRetry(ctx, client, cfg, provisionReq.RequestID, st, msg); err != nil {
+					log.Printf("[PROVISIONER] Failed to report status %s for provision request %s: %v", st, provisionReq.RequestID, err)
+				}
+			}()
+		})
+		if !srv.claimProvisioning() {
+			log.Printf("[PROVISIONER] Provision request %s ignored because provisioning is already %s", provisionReq.RequestID, srv.GetStatus())
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		srv.runProvision(ctx, provisionReq.Settings)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+}
+
+type runnerClaimResponse struct {
+	Allocation struct {
+		SessionID  string `json:"session_id"`
+		ManagerID  string `json:"manager_id"`
+		Generation int64  `json:"generation"`
+	} `json:"allocation"`
+	LeaseID      string                           `json:"lease_id"`
+	RuntimeToken string                           `json:"runtime_token"`
+	Settings     *sessionsettings.SessionSettings `json:"settings"`
+}
+
+func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client, cfg PullClientConfig) error {
+	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
+		return fmt.Errorf("runner claim requires runner ID and token")
+	}
+	for {
+		claim, ok, err := pollRunnerClaim(ctx, client, cfg)
+		if err != nil {
+			log.Printf("[SESSION_RUNNER] Failed to claim allocation from pool %s: %v", cfg.RunnerPool, err)
+			sleepOrDone(ctx, 5*time.Second)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if claim.Settings == nil || claim.RuntimeToken == "" || claim.Allocation.SessionID == "" {
+			_ = failRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID)
+			continue
+		}
+		claim.Settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
+			Enabled: true, Endpoint: cfg.ProxyURL, SessionID: claim.Allocation.SessionID,
+			ManagerID: claim.Allocation.ManagerID, Token: claim.RuntimeToken, Generation: claim.Allocation.Generation,
+		}
+		go runDirectRuntimeClient(ctx, client.Transport, claim.Settings.ParentRuntime, cfg.RunnerID)
+		if err := ackRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID); err != nil {
+			return fmt.Errorf("ack runner claim: %w", err)
+		}
+		if !srv.claimProvisioning() {
+			return fmt.Errorf("runner provisioning is already %s", srv.GetStatus())
+		}
+		srv.runProvision(ctx, claim.Settings)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+}
+
+func pollRunnerClaim(ctx context.Context, client *http.Client, cfg PullClientConfig) (*runnerClaimResponse, bool, error) {
+	u, err := url.Parse(cfg.ProxyURL + "/internal/session-runners/allocations/next")
+	if err != nil {
+		return nil, false, err
+	}
+	q := u.Query()
+	q.Set("pool", cfg.RunnerPool)
+	q.Set("wait", "30s")
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	authorizeRunnerRequest(req, cfg)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("runner claim returned HTTP %d", resp.StatusCode)
+	}
+	var result runnerClaimResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, false, err
+	}
+	return &result, true, nil
+}
+
+func ackRunnerClaim(ctx context.Context, client *http.Client, cfg PullClientConfig, sessionID, leaseID string) error {
+	return postRunnerJSON(ctx, client, cfg, "/internal/session-runners/allocations/"+url.PathEscape(sessionID)+"/ack", map[string]string{"lease_id": leaseID})
+}
+
+func failRunnerClaim(ctx context.Context, client *http.Client, cfg PullClientConfig, sessionID, leaseID string) error {
+	return postRunnerJSON(ctx, client, cfg, "/internal/session-runners/allocations/"+url.PathEscape(sessionID)+"/fail", map[string]string{"lease_id": leaseID})
+}
+
+func postRunnerJSON(ctx context.Context, client *http.Client, cfg PullClientConfig, path string, body any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.ProxyURL+path, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	authorizeRunnerRequest(req, cfg)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %s returned HTTP %d", path, resp.StatusCode)
+	}
+	return nil
+}
+
+func authorizeRunnerRequest(req *http.Request, cfg PullClientConfig) {
+	req.Header.Set(echoHeaderAuthorization, "Bearer "+cfg.RunnerToken)
+	req.Header.Set("X-Session-Runner-ID", cfg.RunnerID)
+}
+
+const echoHeaderAuthorization = "Authorization"
+
+func reportProvisionRequestStatusWithRetry(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
+	var lastErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		if err := reportProvisionRequestStatus(ctx, client, cfg, requestID, st, msg); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
+	}
+	return lastErr
+}
+
+func newPullHTTPClient(ctx context.Context, caFile string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if caFile == "" {
+		return &http.Client{Timeout: 35 * time.Second, Transport: transport}, nil
+	}
+
+	for {
+		caPEM, err := os.ReadFile(caFile)
+		if err == nil {
+			roots, rootsErr := x509.SystemCertPool()
+			if rootsErr != nil || roots == nil {
+				roots = x509.NewCertPool()
+			}
+			if !roots.AppendCertsFromPEM(caPEM) {
+				return nil, fmt.Errorf("pull provisioner CA file %s contains no certificates", caFile)
+			}
+			transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+			return &http.Client{Timeout: 35 * time.Second, Transport: transport}, nil
+		}
+
+		log.Printf("[PROVISIONER] Waiting for SCIA CA %s: %v", caFile, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func pollProvisionRequest(ctx context.Context, client *http.Client, cfg PullClientConfig) (*pullProvisionRequest, bool, error) {
+	u, err := url.Parse(cfg.ProxyURL + "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/provision-requests")
+	if err != nil {
+		return nil, false, err
+	}
+	q := u.Query()
+	q.Set("wait", "30s")
+	q.Set("pod_name", cfg.PodName)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	authorizePullRequest(req, cfg)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("poll provision request returned HTTP %d", resp.StatusCode)
+	}
+	var provisionReq pullProvisionRequest
+	if err := json.NewDecoder(resp.Body).Decode(&provisionReq); err != nil {
+		return nil, false, err
+	}
+	return &provisionReq, true, nil
+}
+
+func reportProvisionRequestStatus(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
+	path := "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/provision-requests/" + url.PathEscape(requestID) + "/status"
+	return postJSON(ctx, client, cfg, path, map[string]interface{}{
+		"status":   string(st),
+		"message":  msg,
+		"pod_name": cfg.PodName,
+	})
+}
+
+func postJSON(ctx context.Context, client *http.Client, cfg PullClientConfig, path string, body interface{}) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.ProxyURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	authorizePullRequest(req, cfg)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %s returned HTTP %d", path, resp.StatusCode)
+	}
+	return nil
+}
+
+func authorizePullRequest(req *http.Request, cfg PullClientConfig) {
+	if cfg.UpstreamAuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.UpstreamAuthToken)
+		req.Header.Set("X-Session-Manager-Token", cfg.Token)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
+}

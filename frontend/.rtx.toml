@@ -1,0 +1,4 @@
+[tools]
+bun = "1.3.5"
+helm = "latest"
+node = "20"

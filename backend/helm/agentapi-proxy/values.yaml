@@ -1,0 +1,1227 @@
+---
+# Default values for agentapi-proxy.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# =============================================================================
+# グローバル設定 (オプション)
+# =============================================================================
+# 親チャート（ccplant等）から渡されるグローバル設定を受け取ります。
+# これらの設定は後方互換性のためオプションです。
+# global設定が存在しない場合、各設定のローカル値がフォールバックとして使用されます。
+#
+# global:
+#   # UIホスト名 (agentapi-ui用)
+#   hostname: ""
+#   # APIホスト名 (agentapi-proxy用)
+#   apiHostname: ""
+#
+#   github:
+#     enterprise:
+#       enabled: false
+#       baseUrl: ""
+#     oauth:
+#       clientId: ""
+#       clientSecret: ""
+#
+#   ingress:
+#     className: nginx
+#     tls:
+#       enabled: true
+
+# API process settings. The API owns the public HTTP surface and application
+# data only; it never receives Kubernetes workload credentials.
+api:
+  replicaCount: 1
+  image:
+    # The public API does not need agent CLIs or session tooling.
+    # Use the full backend image only for legacy direct/local execution.
+    repository: ghcr.io/ccplant/ccplant-api
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: true
+    automount: false
+    annotations: {}
+    name: ""
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 999
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: []
+  envFrom: []
+  # API application persistence. This is independent from the worker and
+  # session-manager stores even when all three roles use the same libSQL
+  # service and credentials.
+  kvStore:
+    namespace: default
+    backend: libsql
+    # Ephemeral single-replica default. Production deployments should use an
+    # external libSQL URL through databaseUrlSecretRef.
+    databaseUrl: file:///tmp/agentapi-api.db
+    authToken: ""
+    databaseUrlSecretRef:
+      name: ""
+      key: database-url
+    authTokenSecretRef:
+      name: ""
+      key: auth-token
+    primary:
+      backend: ""
+      databaseUrl: ""
+      authToken: ""
+      databaseUrlSecretRef:
+        name: ""
+        key: database-url
+      authTokenSecretRef:
+        name: ""
+        key: auth-token
+    secondary:
+      backend: ""
+      databaseUrl: ""
+      authToken: ""
+      databaseUrlSecretRef:
+        name: ""
+        key: database-url
+      authTokenSecretRef:
+        name: ""
+        key: auth-token
+    replication:
+      mode: ""
+    migration:
+      enabled: false
+      dryRun: false
+      overwrite: false
+      output: text
+  # Redis client settings used by the API for cross-pod state. The root redis
+  # key only controls the optional bundled Redis workload.
+  redis:
+    addr: ""
+    existingSecret: ""
+    existingSecretPasswordKey: redis-password
+    db: 0
+    tlsEnabled: false
+    dialTimeout: "5s"
+    readTimeout: "3s"
+    writeTimeout: "3s"
+
+  encryption:
+    keySecretRef:
+      name: ""
+      key: encryption-key
+  # Credential accepted by the API's worker-control endpoints. This is shared
+  # with the worker only and must not be the session provisioner credential.
+  workerControl:
+    tokenSecretRef:
+      name: ""
+      key: token
+  # Authenticated API client used when session-manager is enabled.
+  sessionManager:
+    url: ""
+    tokenSecretRef:
+      name: ""
+      key: token
+
+# Deprecated API aliases retained for upgrades using older values files.
+replicaCount: 1
+
+# Background controllers run in a dedicated process. Workload settings and
+# controller settings intentionally live under this key rather than the proxy.
+worker:
+  enabled: false
+  replicaCount: 1
+  image:
+    # Workers only need the ccplant binary and share the lightweight API image.
+    repository: ghcr.io/ccplant/ccplant-api
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: true
+    automount: false
+    annotations: {}
+    name: ""
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: []
+  envFrom: []
+
+  # The worker only calls this authenticated control API; it never gets the
+  # session-manager or session-provisioner credentials.
+  controlApi:
+    url: ""
+    tokenSecretRef:
+      name: ""
+      key: token
+
+  # Worker persistence is deliberately independent from API values.
+  kvStore:
+    namespace: default
+    backend: libsql
+    databaseUrl: ""
+    authToken: ""
+    databaseUrlSecretRef:
+      name: ""
+      key: database-url
+    authTokenSecretRef:
+      name: ""
+      key: auth-token
+
+  # Redis is mandatory for worker leader election. When addr is empty and the
+  # bundled Redis chart is enabled, the chart derives its in-cluster address.
+  redis:
+    addr: ""
+    existingSecret: ""
+    existingSecretPasswordKey: redis-password
+    db: 0
+    tlsEnabled: false
+    dialTimeout: "5s"
+    readTimeout: "3s"
+    writeTimeout: "3s"
+
+  # Default Slack Socket Mode connection. Tokens are injected by kubelet from
+  # this Secret; the worker does not require Kubernetes API access.
+  slack:
+    baseUrl: ""
+    tokenSecretRef:
+      name: ""
+      appTokenKey: app-token
+      botTokenKey: bot-token
+    dryRun: false
+
+  schedule:
+    enabled: false
+    checkInterval: "30s"
+    leaderElection:
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+
+  slackbotCleanup:
+    enabled: false
+    sessionTTL: "72h"
+    checkInterval: "1h"
+    sessionTTLCheckInterval: "1m"
+    dryRun: false
+    leaderElection:
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+
+  stockInventory:
+    enabled: false
+    checkInterval: "30s"
+    targetCount: 2
+    dockerEnabled: false
+    pools: []
+    leaderElection:
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+
+# The forwarding session manager is an independent HTTP workload.
+sessionManager:
+  enabled: false
+  replicaCount: 1
+  port: 8080
+  image:
+    repository: ghcr.io/ccplant/ccplant-backend
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    create: true
+    automount: true
+    annotations: {}
+    name: ""
+  # Optional registration with a parent/external control plane. A local
+  # session-manager does not need any of these credentials.
+  externalRegistration:
+    enabled: false
+    publicUrl: ""
+    upstreamUrl: ""
+    connectionTokenSecretRef:
+      name: ""
+      key: connection-token
+    hmacSecretRef:
+      name: ""
+      key: hmac-secret
+  # Cluster-wide runner mode. The manager owns idle runner inventory for this
+  # logical pool; each runner claims work directly from the parent API.
+  runner:
+    enabled: false
+    managerId: ""
+    pool: ""
+    upstreamUrl: ""
+    connectionTokenSecretRef:
+      name: ""
+      key: connection-token
+  # Credential accepted only by the session-manager internal API. The API
+  # client references the same Secret independently under api.sessionManager.
+  internalApi:
+    tokenSecretRef:
+      name: ""
+      key: token
+  # The manager reads and writes encrypted session settings itself. Reference
+  # the same operator-managed Secret as the API using this independent ref.
+  encryption:
+    keySecretRef:
+      name: ""
+      key: encryption-key
+  allocation:
+    leaseDuration: "15s"
+    renewDeadline: "10s"
+    retryPeriod: "2s"
+  kvStore:
+    namespace: default
+    backend: libsql
+    databaseUrl: ""
+    authToken: ""
+    databaseUrlSecretRef:
+      name: ""
+      key: database-url
+    authTokenSecretRef:
+      name: ""
+      key: auth-token
+  redis:
+    addr: ""
+    existingSecret: ""
+    existingSecretPasswordKey: redis-password
+    db: 0
+    tlsEnabled: false
+    dialTimeout: "5s"
+    readTimeout: "3s"
+    writeTimeout: "3s"
+  sessionPersistence:
+    backend: ""
+    path: /var/lib/agentapi-session-state
+    suspendAfter: 1h
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessModes: [ReadWriteOnce]
+      size: 5Gi
+    s3:
+      bucket: ""
+      region: garage
+      prefix: agentapi-sessions/
+      endpoint: ""
+  sessionControl:
+    enabled: false
+    directRuntimeEnabled: false
+  # GitHub material copied into Session Pod Secrets. API OAuth/application
+  # credentials remain independently configured at the root github key.
+  github:
+    token: ""
+    tokenRef:
+      name: ""
+      key: github-token
+    enterprise:
+      enabled: false
+      baseUrl: ""
+      apiUrl: ""
+    app:
+      id: ""
+      installationId: ""
+      repositoryRestriction: false
+      privateKey:
+        secretName: ""
+        key: private-key
+  # Kubernetes workload allocation belongs exclusively to this process when
+  # sessionManager.enabled=true. The deprecated root kubernetesSession values
+  # are not consulted in that mode.
+  kubernetesSession:
+    enabled: true
+    serviceAccountName: agentapi-proxy-session
+    rbac:
+      create: true
+    image: ""
+    networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
+    networkFilter:
+      resources:
+        requests: {cpu: "250m", memory: "256Mi"}
+        limits: {cpu: "1000m", memory: "512Mi"}
+      initResources:
+        requests: {cpu: "50m", memory: "32Mi"}
+        limits: {cpu: "100m", memory: "64Mi"}
+    imagePullPolicy: IfNotPresent
+    basePort: 9000
+    resources:
+      requests: {cpu: "500m", memory: "512Mi"}
+      limits: {cpu: "2", memory: "4Gi"}
+    pvc:
+      enabled: false
+      storageClass: ""
+      storageSize: "10Gi"
+    podStartTimeout: 120
+    podStopTimeout: 30
+    provisioner:
+      proxyUrl: ""
+      tokenSecretRef:
+        name: ""
+        key: provisioner-token
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    podTemplate: {}
+    settingsBaseSecret: ""
+    slackIntegration:
+      botToken:
+        secretName: ""
+        key: bot-token
+    otelCollector:
+      enabled: false
+      scrapeInterval: "15s"
+      claudeCodeMetricsPort: 9464
+      exporterPort: 9090
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 999
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: []
+  envFrom: []
+  livenessProbe:
+    httpGet:
+      path: /livez
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+image:
+  repository: ghcr.io/ccplant/ccplant-backend
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # AWS IAM Role for S3 access (EKS + IRSA)
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/agentapi-s3-role
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# Pod security context
+# If not set, defaults to fsGroup: 999, runAsUser: 999, runAsGroup: 999
+podSecurityContext: {}
+# fsGroup: 999
+# runAsUser: 999
+# runAsGroup: 999
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Stable endpoint used by session provisioners to reach the active control plane.
+# Keep this name independent from the Helm release so blue/green releases can
+# switch the selector without recreating existing session workloads.
+controlPlaneService:
+  enabled: true
+  create: true
+  name: control
+  port: 8080
+  # Preserve the Service when its creating Helm release is uninstalled. A new
+  # release should use create=false and may take over traffic by updating the
+  # retained Service selector during cutover.
+  retainOnDelete: true
+  annotations: {}
+  # Empty uses the current proxy Deployment selector. During cutover this may
+  # be set to the selector of the new release.
+  selector: {}
+
+scia:
+  # Deploy and configure scia Google OAuth broker/proxy integration.
+  enabled: false
+  image:
+    repository: ghcr.io/takutakahashi/scia
+    tag: "0.17.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  publicBaseUrl: ""
+  oauthInternalUrl: ""
+  proxyUrl: ""
+  credential: ""
+  todoistCredential: "default.todoist"
+  userNamespace: ""
+  dynamicUserSecretNamePrefix: scia-oauth-
+  noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
+  googleHosts:
+    - www.googleapis.com
+    - tasks.googleapis.com
+  googlePaths:
+    - /calendar/v3/*
+    - /tasks/v1/*
+  todoistHosts:
+    - api.todoist.com
+  todoistPaths:
+    - /api/v1/*
+    - /rest/v2/*
+    - /sync/v9/*
+  sessionSidecar:
+    enabled: true
+    image: ghcr.io/takutakahashi/scia:0.17.0
+    configImage: busybox:1.36
+    port: 18081
+  oauth:
+    listen: "0.0.0.0:8081"
+    redirectUrl: ""
+    google:
+      scope: "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks.readonly"
+      name: Google
+      setup: {}
+      scopes:
+        - id: calendar-read
+          value: "https://www.googleapis.com/auth/calendar.readonly"
+          name: "Google Calendar read-only"
+          desc: "Read Google Calendar events."
+          group: calendar
+          groupName: "Google Calendar"
+          groupDesc: "Choose how much Google Calendar access to grant."
+          enabled: true
+        - id: calendar-write
+          value: "https://www.googleapis.com/auth/calendar"
+          name: "Google Calendar read/write"
+          desc: "Read and write Google Calendar events."
+          group: calendar
+          groupName: "Google Calendar"
+          groupDesc: "Choose how much Google Calendar access to grant."
+          enabled: false
+        - id: tasks-read
+          value: "https://www.googleapis.com/auth/tasks.readonly"
+          name: "Google Tasks read-only"
+          desc: "Read Google Tasks and task lists."
+          group: tasks
+          groupName: "Google Tasks"
+          groupDesc: "Choose how much Google Tasks access to grant."
+          enabled: true
+        - id: tasks-write
+          value: "https://www.googleapis.com/auth/tasks"
+          name: "Google Tasks read/write"
+          desc: "Read and write Google Tasks and task lists."
+          group: tasks
+          groupName: "Google Tasks"
+          groupDesc: "Choose how much Google Tasks access to grant."
+          enabled: false
+      # Secret-backed Google OAuth client credentials. Set create=false and
+      # existingSecret to use a Secret managed outside Helm.
+      secret:
+        create: false
+        existingSecret: ""
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+        clientId: ""
+        clientSecret: ""
+    todoist:
+      enabled: false
+      scope: "data:read_write"
+      name: Todoist
+      iconUrl: "https://todoist.com/favicon.ico"
+      description: "Connect Todoist tasks and projects."
+      setup: {}
+      scopes:
+        - id: read-write
+          value: "data:read_write"
+          name: "Todoist read/write"
+          desc: "Read and write Todoist tasks and projects."
+          enabled: true
+        - id: task-add
+          value: "task:add"
+          name: "Todoist task add"
+          desc: "Add Todoist tasks without reading existing data."
+          enabled: false
+      omitRedirectUrl: false
+      secret:
+        create: true
+        existingSecret: ""
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+        clientId: ""
+        clientSecret: ""
+  service:
+    port: 8081
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "250m"
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+asset:
+  enabled: false
+  backend: nginx
+  publicBaseUrl: ""
+  storagePath: /var/lib/agentapi-assets
+  nginx:
+    image:
+      repository: nginx
+      tag: "1.27-alpine"
+      pullPolicy: IfNotPresent
+    replicaCount: 1
+    service:
+      port: 80
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "250m"
+  persistence:
+    enabled: false
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+  s3:
+    bucket: ""
+    region: ""
+    prefix: "agentapi-assets/"
+    endpoint: ""
+
+# ACP conversation snapshots. Use "volume" for a backend PVC or "s3" for
+# Garage/AWS-compatible object storage. S3 credentials are supplied with envFrom.
+sessionPersistence:
+  backend: ""
+  path: /var/lib/agentapi-session-state
+  # Suspend the workload this long after an ACP turn is checkpointed.
+  suspendAfter: 1h
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 5Gi
+  s3:
+    bucket: ""
+    region: garage
+    prefix: agentapi-sessions/
+    endpoint: ""
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  # When empty, global.apiHostname or config.hostname is used.
+  hosts: []
+  tls: []
+  # - secretName: agentapi-proxy-tls
+  #   hosts:
+  #     - agentapi.example.com
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "500m"
+  limits:
+    memory: "1Gi"
+    cpu: 1
+
+# GitHub configuration
+github:
+  # GitHub Personal Access Token (GitHub App を使わない場合)
+  token: ""
+  tokenRef:
+    name: ""
+    key: "github-token"
+
+  # GitHub Enterprise Server を使用する場合は true に設定
+  enterprise:
+    enabled: false
+    # GitHub Enterprise Server のベース URL
+    # 例: https://github.company.com
+    baseUrl: ""
+    # GitHub Enterprise Server API の URL
+    # 例: https://github.company.com/api/v3
+    apiUrl: ""
+  # GitHub App 認証設定
+  app:
+    # GitHub App ID (必須)
+    # GitHub App設定画面の "App ID" に表示される数値
+    id: ""
+    # GitHub App Installation ID (必須)
+    # 組織にインストール後のURLから取得: /settings/installations/12345678 -> 12345678
+    installationId: ""
+    # GitHub App installation token を対象リポジトリに限定する場合は true
+    repositoryRestriction: false
+    # GitHub App の秘密鍵（PEM形式）を含む Secret (必須)
+    # kubectl create secret generic github-app-private-key --from-file=private-key=/path/to/app.private-key.pem
+    privateKey:
+      # Secret 名
+      secretName: ""
+      # Secret 内のキー名（通常は "private-key" のまま使用）
+      key: "private-key"
+
+# Application Configuration
+config:
+  # ホスト名設定 (例: agentapi.example.com)
+  hostname: ""
+
+  # Response-level token usage persistence. Credentials are supplied only via
+  # an operator-managed Secret and are independent from kvStore.
+  usage:
+    enabled: false
+    databaseUrlSecretRef:
+      name: ""
+      key: "database-url"
+    authTokenSecretRef:
+      name: ""
+      key: "auth-token"
+
+  # 認証設定
+  auth:
+    # Break-glass administrator authentication. This works even when static,
+    # GitHub and other authentication providers are disabled. Prefer tokenSecretRef over
+    # token so the credential is not stored in Helm release values.
+    bootstrapAdmin:
+      enabled: false
+      userId: "bootstrap-admin"
+      username: "admin"
+      token: ""
+      tokenSecretRef:
+        name: ""
+        key: "token"
+    static:
+      enabled: false
+      headerName: "X-API-Key"
+    github:
+      enabled: false
+      baseUrl: "https://api.github.com"
+      tokenHeader: "Authorization"
+      oauth:
+        clientId: ""
+        clientSecret: ""
+        clientSecretRef:
+          name: ""
+          key: "client-secret"
+        scope: "read:user read:org project"
+        baseUrl: ""
+        # 許可するリダイレクトURI (カンマ区切りで複数指定可能)
+        allowedRedirectUris: ""
+
+  # Claude Code 設定
+  claude:
+    # Claude Code の起動引数 (例: "--dangerously-skip-permissions")
+    args: ""
+
+  # VAPID (Web Push 通知) 設定
+  vapid:
+    # VAPID 公開鍵 (Web Push 通知用)
+    publicKey: ""
+    # VAPID 秘密鍵 (Web Push 通知用)
+    privateKey: ""
+    privateKeyRef:
+      name: ""
+      key: "vapid-private-key"
+    # VAPID 連絡先メールアドレス
+    contactEmail: ""
+
+  # 通知設定
+  notification:
+    # 通知ベースURL (例: https://example.com)
+    # 末尾のスラッシュは含めない
+    baseUrl: ""
+
+  # Webhook 設定
+  webhook:
+    # Webhook URL のベースURL (例: https://example.com)
+    # 設定しない場合はリクエストヘッダーから自動検出
+    baseUrl: ""
+    # GitHub Enterprise Server のデフォルトホスト名
+    # webhook に enterprise_url が設定されていない場合、このホスト名でマッチング
+    # 例: github.company.com (https:// なし)
+    githubEnterpriseHost: ""
+
+  # 暗号化設定
+  encryption:
+    # 暗号化キー (Base64エンコードされた32バイトの鍵)
+    # 設定しない場合は暗号化なし (Noop) になります
+    key: ""
+
+# OpenTelemetry / Grafana Cloud Application Observability
+observability:
+  openTelemetry:
+    enabled: false
+    serviceName: agentapi-proxy
+    serviceNamespace: ccplant
+    deploymentEnvironment: ""
+    tracesSampler: parentbased_traceidratio
+    tracesSamplerArg: "1.0"
+    # Existing Secret containing the OTLP base endpoint and authentication
+    # headers. Create it separately; credentials are never stored in values.
+    secretRef:
+      name: ""
+      endpointKey: OTEL_EXPORTER_OTLP_ENDPOINT
+      headersKey: OTEL_EXPORTER_OTLP_HEADERS
+
+# Additional environment variables
+env: []
+# - name: CCPLANT_BINARY_PATH
+#   value: "/usr/local/bin/ccplant"
+# - name: GITHUB_TOKEN
+#   value: "your-token"
+# - name: CLAUDE_ARGS
+#   value: "--dangerously-skip-permissions"
+# GitHub Enterprise Server を使用する場合の環境変数例
+# - name: GITHUB_URL
+#   value: "https://github.company.com"
+# - name: GITHUB_API
+#   value: "https://github.company.com/api/v3"
+
+# Environment variables from ConfigMaps and Secrets
+envFrom: []
+# - configMapRef:
+#     name: agentapi-config
+# - secretRef:
+#     name: agentapi-secrets
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  successThreshold: 1
+  failureThreshold: 3
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Auth configuration (stored in ConfigMap and mounted to the container)
+# This allows complex authorization rules that cannot be easily expressed as environment variables
+authConfig:
+# Example configuration structure:
+# github:
+#   user_mapping:
+#     # Allow users who do not belong to any configured team to authenticate.
+#     # They receive default_role and default_permissions. Defaults to false.
+#     allow_users_without_team: false
+#     default_role: "user"
+#     default_permissions:
+#       - "read"
+#       - "session:create"
+#       - "session:list"
+#     team_role_mapping:
+#       "myorg/admins":
+#         role: "admin"
+#         permissions:
+#           - "*"
+#       "myorg/developers":
+#         role: "developer"
+#         permissions:
+#           - "read"
+#           - "write"
+#           - "execute"
+#           - "session:create"
+#           - "session:list"
+#           - "session:delete"
+#           - "session:access"
+#       "myorg/viewers":
+#         role: "viewer"
+#         permissions:
+#           - "read"
+#           - "session:list"
+
+# Role-based environment files configuration
+# Map environment files to secrets - this creates the appropriate projected volume automatically
+roleEnvFiles:
+  # Configuration for role-based environment variables
+  enabled: false
+  path: "/etc/role-env-files"
+  loadDefault: true
+
+  # Simple mapping: filename -> secret configuration
+  # ファイル名とSecretの設定を直接マッピング
+  files:
+    # "default.env":
+    #   secretName: "agentapi-env-default"
+    #   key: "default.env"
+    # "admin.env":
+    #   secretName: "agentapi-env-admin" 
+    #   key: "admin.env"
+    # "developer.env":
+    #   secretName: "agentapi-env-developer"
+    #   key: "developer.env"
+    # "user.env":
+    #   secretName: "agentapi-env-user"
+    #   key: "user.env"
+    # "guest.env":
+    #   secretName: "agentapi-env-guest"
+    #   key: "guest.env"
+  
+  # Example usage:
+  # roleEnvFiles:
+  #   enabled: true
+  #   files:
+  #     "default.env":
+  #       secretName: "common-env-vars"
+  #       key: "default.env"
+  #     "admin.env":
+  #       secretName: "admin-secrets"
+  #       key: "admin-config"
+  #     "developer.env":
+  #       secretName: "dev-config"
+  #       key: "development.env"
+
+# Kubernetes Session Management
+# Sessions are created as separate Kubernetes Deployments
+kubernetesSession:
+  # Creates the RBAC and ServiceAccount required by session workloads.
+  enabled: false
+
+  # A shadow release can share the existing session identity and RBAC by using
+  # the same name with rbac.create=false.
+  serviceAccountName: agentapi-proxy-session
+  rbac:
+    create: true
+
+  # Container image for session pods
+  # If empty, uses the full root image (image.repository), not api.image.
+  # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
+  image: ""
+
+  # Container image for the network-filter sidecar and initContainer (sandbox feature)
+  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
+
+  # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
+  networkFilter:
+    # Resources for the network-filter forward proxy sidecar container
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "512Mi"
+    # Resources for the network-filter-setup init container
+    initResources:
+      requests:
+        cpu: "50m"
+        memory: "32Mi"
+      limits:
+        cpu: "100m"
+        memory: "64Mi"
+
+  # Image pull policy for session pods
+  imagePullPolicy: "IfNotPresent"
+
+  # Base port that agentapi listens on in session pods
+  basePort: 9000
+
+  # Resource requests and limits for session pods (Kubernetes standard format)
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+  # PVC configuration for session workdir
+  pvc:
+    # Enable PersistentVolumeClaim for session pods workdir
+    # When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
+    enabled: false
+    # Storage class for session PVCs (empty for default)
+    storageClass: ""
+    # Storage size for session PVCs
+    storageSize: "10Gi"
+
+  # Timeout settings (in seconds)
+  podStartTimeout: 120
+  podStopTimeout: 30
+
+  # Session Pods poll the proxy internal API for provisioning jobs.
+  provisioner:
+    proxyUrl: ""
+    tokenSecretRef:
+      name: ""
+      key: provisioner-token
+
+  # Node selector for session pods
+  # Example:
+  # nodeSelector:
+  #   disktype: ssd
+  #   kubernetes.io/arch: amd64
+  nodeSelector: {}
+
+  # Kubernetes affinity rules for session pods. Example soft preference:
+  # affinity:
+  #   nodeAffinity:
+  #     preferredDuringSchedulingIgnoredDuringExecution:
+  #       - weight: 100
+  #         preference:
+  #           matchExpressions:
+  #             - key: node-pool
+  #               operator: In
+  #               values: [agent]
+  affinity: {}
+
+  # Tolerations for session pods
+  # Example:
+  # tolerations:
+  #   - key: "dedicated"
+  #     operator: "Equal"
+  #     value: "agent"
+  #     effect: "NoSchedule"
+  #   - key: "gpu"
+  #     operator: "Exists"
+  #     effect: "PreferNoSchedule"
+  tolerations: []
+
+  # Additional PodTemplateSpec fields to merge into every session pod.
+  # This is rendered as a YAML file, mounted into the proxy pod, and applied
+  # with Kubernetes strategic merge patch when each session workload is created.
+  # The proxy preserves required session fields such as serviceAccountName,
+  # restartPolicy, session labels, and the main agentapi container command/args.
+  podTemplate: {}
+  # metadata:
+  #   annotations:
+  #     example.com/template: "enabled"
+  #   labels:
+  #     workload-type: agent-session
+  # spec:
+  #   priorityClassName: agent-session
+  #   imagePullSecrets:
+  #     - name: ghcr-pull-secret
+  #   volumes:
+  #     - name: extra-config
+  #       configMap:
+  #         name: extra-config
+  #   containers:
+  #     - name: agentapi
+  #       volumeMounts:
+  #         - name: extra-config
+  #           mountPath: /etc/extra-config
+  #           readOnly: true
+
+  # GitHub authentication for repository cloning in session pods
+  # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
+  # The Secret will be used by the clone-repo init container
+
+  # Single base Kubernetes Secret shared by all sessions.
+  # agentapi-proxy reads this Secret before each session starts and merges it at the lowest
+  # priority (base → team → user). It contains a single settings.json key in the agentapi
+  # settings format, which covers all per-session configuration in one place:
+  #   - env_vars:       arbitrary environment variables injected into every session
+  #   - auth_mode:      "bedrock" or "oauth" (overridden by team/user settings)
+  #   - bedrock:        AWS Bedrock credentials/model (auth_mode=bedrock)
+  #   - mcp_servers:    MCP server configurations merged into ~/.claude.json (Claude) and ~/.codex/config.toml (Codex)
+  #   - marketplaces:   Claude Code marketplace URLs
+  #   - enabled_plugins: Claude Code plugins to enable
+  #   - hooks:          Claude Code hooks
+  #
+  # Secret naming conventions for team/user overrides:
+  #   - Team settings: agentapi-settings-{team-name}
+  #   - User settings: agentapi-settings-{user-id}
+  #
+  # Example base Secret:
+  #   apiVersion: v1
+  #   kind: Secret
+  #   metadata:
+  #     name: agentapi-settings-base
+  #   stringData:
+  #     settings.json: |
+  #       {
+  #         "auth_mode": "bedrock",
+  #         "bedrock": {"model": "anthropic.claude-3-5-sonnet-20241022-v2:0"},
+  #         "mcp_servers": {
+  #           "github": {"type": "http", "url": "https://mcp-github.example.com"}
+  #         },
+  #         "marketplaces": {"myorg": {"url": "https://github.com/myorg/marketplace"}},
+  #         "enabled_plugins": ["my-plugin@myorg"],
+  #         "env_vars": {"MY_GLOBAL_VAR": "value"}
+  #       }
+  settingsBaseSecret: ""
+
+  # Slack Integration
+  # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
+  # ACP agent types produce the history file used for Slack forwarding.
+  slackIntegration:
+    # Kubernetes Secret containing the Slack bot token.
+    # The Secret must exist in the same namespace as the session pods.
+    # Create it with:
+    #   kubectl create secret generic slack-credentials \
+    #     --from-literal=bot-token=xoxb-...
+    botToken:
+      # Secret name (required to enable Slack integration)
+      secretName: ""
+      # Key within the Secret that contains the bot token
+      # Defaults to "bot-token"
+      key: "bot-token"
+
+  # OpenTelemetry Collector Configuration
+  # Enables Prometheus metrics collection from Claude Code in session pods.
+  # otelcol always runs as an in-process subprocess inside the agentapi container,
+  # started by the provisioner after user context is established. This ensures
+  # metrics labels (user_id, session_id, etc.) are correct even with stock sessions.
+  otelCollector:
+    enabled: false
+
+    # Scrape interval for Claude Code metrics
+    scrapeInterval: "15s"
+
+    # Claude Code metrics port (where OTEL_METRICS_EXPORTER=prometheus exposes metrics)
+    claudeCodeMetricsPort: 9464
+
+    # Exporter port (where otelcol exposes labeled metrics)
+    exporterPort: 9090
+
+# =============================================================================
+# Redis – 複数Pod間のセッションステータス同期
+# =============================================================================
+# replicaCount > 1 の場合は redis.enabled=true にすることを強く推奨します。
+# Redis が無効の場合はノーオペレーション実装が使われ、ステータス同期は各Podのメモリ内
+# のみになります（単一レプリカ運用では問題ありません）。
+#
+# enabled=true のとき Bitnami Redis サブチャートが一緒にデプロイされます。
+# 外部 Redis を使いたい場合は enabled=false にして externalRedis を設定してください。
+redis:
+  # enabled=true: Bitnami Redis サブチャートをデプロイする
+  enabled: false
+
+  # Bitnami Redis サブチャートの設定
+  # https://github.com/bitnami/charts/tree/main/bitnami/redis
+  architecture: standalone
+  image:
+    tag: latest
+    pullPolicy: IfNotPresent
+  auth:
+    enabled: false
+    password: ""
+  master:
+    kind: Deployment
+    persistence:
+      enabled: false
+      size: 1Gi
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+# Session-to-backend runtime control over authenticated HTTPS long polling.
+# Redis is only accessed by backend pods; session pods never receive Redis credentials.
+sessionControl:
+  enabled: false
+  # Route newly allocated ESM sessions through a per-session outbound channel
+  # from the Session Pod directly to the parent proxy.
+  directRuntimeEnabled: false
+
+# Ephemeral libSQL Server for development trials only.
+libsqlTrial:
+  enabled: false
+  image: ghcr.io/tursodatabase/libsql-server:3ec6803
+  storageSize: 1Gi

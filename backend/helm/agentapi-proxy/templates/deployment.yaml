@@ -1,0 +1,947 @@
+{{- $asset := .Values.asset | default dict }}
+{{- $assetBackend := $asset.backend | default "nginx" }}
+{{- $assetEnabled := true }}
+{{- if hasKey $asset "enabled" }}
+{{- $assetEnabled = $asset.enabled }}
+{{- end }}
+{{- $assetStoragePath := $asset.storagePath | default "/var/lib/agentapi-assets" }}
+{{- $assetPersistence := $asset.persistence | default dict }}
+{{- $assetPersistenceEnabled := true }}
+{{- if hasKey $assetPersistence "enabled" }}
+{{- $assetPersistenceEnabled = $assetPersistence.enabled }}
+{{- end }}
+{{- $assetS3 := $asset.s3 | default dict }}
+{{- $sessionPersistence := .Values.sessionPersistence | default dict }}
+{{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
+{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
+{{- $sessionPersistenceSuspendAfter := $sessionPersistence.suspendAfter | default "1h" }}
+{{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
+{{- $valuesMap := .Values | toJson | fromJson }}
+{{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
+{{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
+{{- $api := .Values.api | default dict }}
+{{- $apiImage := $api.image | default .Values.image }}
+{{- $apiPodAnnotations := $api.podAnnotations | default .Values.podAnnotations }}
+{{- $apiPodLabels := $api.podLabels | default .Values.podLabels }}
+{{- $apiPodSecurityContext := $api.podSecurityContext | default .Values.podSecurityContext }}
+{{- $apiSecurityContext := $api.securityContext | default .Values.securityContext }}
+{{- $apiImagePullSecrets := $api.imagePullSecrets | default .Values.imagePullSecrets }}
+{{- $apiResources := $api.resources | default .Values.resources }}
+{{- /* Deduplicate shared and API-specific env entries with API values winning. */}}
+{{- $apiEnvByName := dict }}
+{{- $apiEnvNames := list }}
+{{- range (concat (.Values.env | default list) ($api.env | default list)) }}
+{{- if not (hasKey $apiEnvByName .name) }}
+{{- $apiEnvNames = append $apiEnvNames .name }}
+{{- end }}
+{{- $_ := set $apiEnvByName .name . }}
+{{- end }}
+{{- $apiEnv := list }}
+{{- range $apiEnvNames }}
+{{- $apiEnv = append $apiEnv (index $apiEnvByName .) }}
+{{- end }}
+{{- /* Prefer canonical structured values over their legacy env entries. */}}
+{{- $canonicalApiEnv := dict }}
+{{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}
+{{- with .Values.config.auth.github.oauth.allowedRedirectUris }}{{- $_ := set $canonicalApiEnv "OAUTH_ALLOWED_REDIRECT_URIS" true }}{{- end }}
+{{- with .Values.config.vapid.publicKey }}{{- $_ := set $canonicalApiEnv "VAPID_PUBLIC_KEY" true }}{{- end }}
+{{- with .Values.config.vapid.contactEmail }}{{- $_ := set $canonicalApiEnv "VAPID_CONTACT_EMAIL" true }}{{- end }}
+{{- $filteredApiEnv := list }}
+{{- range $apiEnv }}
+{{- if not (hasKey $canonicalApiEnv .name) }}
+{{- $filteredApiEnv = append $filteredApiEnv . }}
+{{- end }}
+{{- end }}
+{{- $apiEnv = $filteredApiEnv }}
+{{- $apiEnvFrom := concat (.Values.envFrom | default list) ($api.envFrom | default list) }}
+{{- $apiKV := $api.kvStore | default dict }}
+{{- if not $apiKV }}
+{{- $apiKV = dig "kvStore" (dict) .Values.config }}
+{{- end }}
+{{- $apiRedis := $api.redis | default dict }}
+{{- if not $apiRedis }}
+{{- $apiRedis = dig "externalRedis" (dict) $valuesMap }}
+{{- end }}
+{{- $apiRedisAddr := $apiRedis.addr | default "" }}
+{{- if and (not $apiRedisAddr) .Values.redis.enabled }}
+{{- $apiRedisAddr = printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) }}
+{{- end }}
+{{- $sessionManagerEnabled := dig "enabled" false (.Values.sessionManager | default dict) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $api.replicaCount | default .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with $apiPodAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "agentapi-proxy.labels" . | nindent 8 }}
+        app.kubernetes.io/component: proxy
+        {{- with $apiPodLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $apiImagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "agentapi-proxy.apiServiceAccountName" . }}
+      automountServiceAccountToken: {{ eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes" }}
+      securityContext:
+        {{- if $apiPodSecurityContext }}
+        {{- toYaml $apiPodSecurityContext | nindent 8 }}
+        {{- else }}
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+        {{- end }}
+      {{- if (dig "migration" "enabled" false $apiKV) }}
+      initContainers:
+        - name: kv-store-migrate
+          securityContext:
+            {{- toYaml $apiSecurityContext | nindent 12 }}
+          image: {{ include "agentapi-proxy.apiImage" . | quote }}
+          imagePullPolicy: {{ $apiImage.pullPolicy | default .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+          args:
+            - -ec
+            - >-
+              "${CCPLANT_BINARY_PATH:-/usr/local/bin/ccplant}" kv-store migrate
+              --namespace {{ .Release.Namespace | quote }}
+              --output {{ dig "migration" "output" "text" $apiKV | quote }}
+              {{- if (dig "migration" "dryRun" false $apiKV) }} --dry-run{{- end }}
+              {{- if (dig "migration" "overwrite" false $apiKV) }} --overwrite{{- end }}
+              {{- if not (dig "migration" "dryRun" false $apiKV) }}
+              && "${CCPLANT_BINARY_PATH:-/usr/local/bin/ccplant}" kv-store verify
+              --namespace {{ .Release.Namespace | quote }}
+              --output {{ dig "migration" "output" "text" $apiKV | quote }}
+              {{- end }}
+          env:
+            # API repositories use this logical namespace even though the API
+            # deliberately has no mounted Kubernetes ServiceAccount token.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- range $apiEnv }}
+            {{- if eq .name "CCPLANT_BINARY_PATH" }}
+{{ toYaml (list .) | nindent 12 }}
+            {{- end }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
+              value: {{ dig "primary" "backend" "" $apiKV | quote }}
+            {{- $migrationPrimaryDatabaseSecret := dig "primary" "databaseUrlSecretRef" "name" "" $apiKV }}
+            {{- if $migrationPrimaryDatabaseSecret }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationPrimaryDatabaseSecret | quote }}
+                  key: {{ dig "primary" "databaseUrlSecretRef" "key" "database-url" $apiKV | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              value: {{ dig "primary" "databaseUrl" "" $apiKV | quote }}
+            {{- end }}
+            {{- $migrationPrimaryAuthSecret := dig "primary" "authTokenSecretRef" "name" "" $apiKV }}
+            {{- if $migrationPrimaryAuthSecret }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationPrimaryAuthSecret | quote }}
+                  key: {{ dig "primary" "authTokenSecretRef" "key" "auth-token" $apiKV | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              value: {{ dig "primary" "authToken" "" $apiKV | quote }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_BACKEND
+              value: {{ dig "secondary" "backend" "" $apiKV | quote }}
+            {{- $migrationSecondaryDatabaseSecret := dig "secondary" "databaseUrlSecretRef" "name" "" $apiKV }}
+            {{- if $migrationSecondaryDatabaseSecret }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecondaryDatabaseSecret | quote }}
+                  key: {{ dig "secondary" "databaseUrlSecretRef" "key" "database-url" $apiKV | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              value: {{ dig "secondary" "databaseUrl" "" $apiKV | quote }}
+            {{- end }}
+            {{- $migrationSecondaryAuthSecret := dig "secondary" "authTokenSecretRef" "name" "" $apiKV }}
+            {{- if $migrationSecondaryAuthSecret }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecondaryAuthSecret | quote }}
+                  key: {{ dig "secondary" "authTokenSecretRef" "key" "auth-token" $apiKV | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              value: {{ dig "secondary" "authToken" "" $apiKV | quote }}
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml $apiSecurityContext | nindent 12 }}
+          image: {{ include "agentapi-proxy.apiImage" . | quote }}
+          imagePullPolicy: {{ $apiImage.pullPolicy | default .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ccplant"]
+          args: ["server"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: HOME
+              value: "/home/agentapi"
+            {{- if (dig "enabled" false $openTelemetry) }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_SERVICE_NAME
+              value: {{ dig "serviceName" "agentapi-proxy" $openTelemetry | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "observability.openTelemetry.secretRef.name is required when OpenTelemetry is enabled" (dig "name" "" $openTelemetrySecret) | quote }}
+                  key: {{ dig "endpointKey" "OTEL_EXPORTER_OTLP_ENDPOINT" $openTelemetrySecret | quote }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ dig "name" "" $openTelemetrySecret | quote }}
+                  key: {{ dig "headersKey" "OTEL_EXPORTER_OTLP_HEADERS" $openTelemetrySecret | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) .Chart.AppVersion | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ dig "tracesSampler" "parentbased_traceidratio" $openTelemetry | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ dig "tracesSamplerArg" "1.0" $openTelemetry | quote }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_NAMESPACE
+              value: {{ dig "namespace" "default" $apiKV | quote }}
+            {{- $kvPrimaryBackend := dig "primary" "backend" "" $apiKV }}
+            {{- if $kvPrimaryBackend }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
+              value: {{ $kvPrimaryBackend | quote }}
+            {{- $kvPrimaryDatabaseURLSecretRefName := dig "primary" "databaseUrlSecretRef" "name" "" $apiKV }}
+            {{- if $kvPrimaryDatabaseURLSecretRefName }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvPrimaryDatabaseURLSecretRefName | quote }}
+                  key: {{ dig "primary" "databaseUrlSecretRef" "key" "database-url" $apiKV | quote }}
+            {{- else }}
+            {{- with (dig "primary" "databaseUrl" "" $apiKV) }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvPrimaryAuthTokenSecretRefName := dig "primary" "authTokenSecretRef" "name" "" $apiKV }}
+            {{- if $kvPrimaryAuthTokenSecretRefName }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvPrimaryAuthTokenSecretRefName | quote }}
+                  key: {{ dig "primary" "authTokenSecretRef" "key" "auth-token" $apiKV | quote }}
+            {{- else }}
+            {{- with (dig "primary" "authToken" "" $apiKV) }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvSecondaryBackend := dig "secondary" "backend" "" $apiKV }}
+            {{- if $kvSecondaryBackend }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_BACKEND
+              value: {{ $kvSecondaryBackend | quote }}
+            {{- $kvSecondaryDatabaseURLSecretRefName := dig "secondary" "databaseUrlSecretRef" "name" "" $apiKV }}
+            {{- if $kvSecondaryDatabaseURLSecretRefName }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvSecondaryDatabaseURLSecretRefName | quote }}
+                  key: {{ dig "secondary" "databaseUrlSecretRef" "key" "database-url" $apiKV | quote }}
+            {{- else }}
+            {{- with (dig "secondary" "databaseUrl" "" $apiKV) }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvSecondaryAuthTokenSecretRefName := dig "secondary" "authTokenSecretRef" "name" "" $apiKV }}
+            {{- if $kvSecondaryAuthTokenSecretRefName }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvSecondaryAuthTokenSecretRefName | quote }}
+                  key: {{ dig "secondary" "authTokenSecretRef" "key" "auth-token" $apiKV | quote }}
+            {{- else }}
+            {{- with (dig "secondary" "authToken" "" $apiKV) }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_REPLICATION_MODE
+              value: {{ dig "replication" "mode" "rollback" $apiKV | default "rollback" | quote }}
+            {{- end }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_BACKEND
+              value: {{ dig "backend" "kubernetes" $apiKV | quote }}
+            {{- if ne (dig "backend" "kubernetes" $apiKV) "kubernetes" }}
+            {{- $kvDatabaseURLSecretRefName := dig "databaseUrlSecretRef" "name" "" $apiKV }}
+            {{- if $kvDatabaseURLSecretRefName }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvDatabaseURLSecretRefName | quote }}
+                  key: {{ dig "databaseUrlSecretRef" "key" "database-url" $apiKV | quote }}
+            {{- else }}
+            {{- with (dig "databaseUrl" "" $apiKV) }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvAuthTokenSecretRefName := dig "authTokenSecretRef" "name" "" $apiKV }}
+            {{- if $kvAuthTokenSecretRefName }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvAuthTokenSecretRefName | quote }}
+                  key: {{ dig "authTokenSecretRef" "key" "auth-token" $apiKV | quote }}
+            {{- else }}
+            {{- with (dig "authToken" "" $apiKV) }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            - name: AGENTAPI_USAGE_ENABLED
+              value: {{ dig "usage" "enabled" false .Values.config | quote }}
+            {{- if (dig "usage" "enabled" false .Values.config) }}
+            - name: AGENTAPI_USAGE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "config.usage.databaseUrlSecretRef.name is required when usage is enabled" (dig "usage" "databaseUrlSecretRef" "name" "" .Values.config) | quote }}
+                  key: {{ dig "usage" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            - name: AGENTAPI_USAGE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "config.usage.authTokenSecretRef.name is required when usage is enabled" (dig "usage" "authTokenSecretRef" "name" "" .Values.config) | quote }}
+                  key: {{ dig "usage" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- end }}
+            # Application configuration via environment variables (AGENTAPI_ prefix)
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_ENABLED
+              value: {{ .Values.config.auth.bootstrapAdmin.enabled | quote }}
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_USER_ID
+              value: {{ .Values.config.auth.bootstrapAdmin.userId | quote }}
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.config.auth.bootstrapAdmin.username | quote }}
+            {{- if .Values.config.auth.bootstrapAdmin.enabled }}
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_TOKEN
+              {{- $bootstrapTokenSecretName := dig "tokenSecretRef" "name" "" .Values.config.auth.bootstrapAdmin }}
+              {{- if $bootstrapTokenSecretName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $bootstrapTokenSecretName | quote }}
+                  key: {{ dig "tokenSecretRef" "key" "token" .Values.config.auth.bootstrapAdmin | quote }}
+              {{- else }}
+              value: {{ required "config.auth.bootstrapAdmin.token or tokenSecretRef.name is required when bootstrapAdmin is enabled" .Values.config.auth.bootstrapAdmin.token | quote }}
+              {{- end }}
+            {{- end }}
+            - name: AGENTAPI_AUTH_STATIC_ENABLED
+              value: {{ .Values.config.auth.static.enabled | quote }}
+            - name: AGENTAPI_AUTH_STATIC_HEADER_NAME
+              value: {{ .Values.config.auth.static.headerName | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_ENABLED
+              value: {{ .Values.config.auth.github.enabled | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_BASE_URL
+              value: {{ .Values.config.auth.github.baseUrl | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_TOKEN_HEADER
+              value: {{ .Values.config.auth.github.tokenHeader | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID
+              {{- $clientId := .Values.config.auth.github.oauth.clientId }}
+              {{- if .Values.global }}
+                {{- if .Values.global.github }}
+                  {{- if .Values.global.github.oauth }}
+                    {{- $clientId = .Values.global.github.oauth.clientId | default $clientId }}
+                  {{- end }}
+                {{- end }}
+                {{- if .Values.global.config }}
+                  {{- if .Values.global.config.auth }}
+                    {{- if .Values.global.config.auth.github }}
+                      {{- if .Values.global.config.auth.github.oauth }}
+                        {{- $clientId = .Values.global.config.auth.github.oauth.clientId | default $clientId }}
+                      {{- end }}
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              value: {{ $clientId | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
+              {{- $oauthSecretRefName := dig "clientSecretRef" "name" "" .Values.config.auth.github.oauth }}
+              {{- if $oauthSecretRefName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $oauthSecretRefName | quote }}
+                  key: {{ dig "clientSecretRef" "key" "client-secret" .Values.config.auth.github.oauth | quote }}
+              {{- else }}
+              {{- $clientSecret := .Values.config.auth.github.oauth.clientSecret }}
+              {{- if .Values.global }}
+                {{- if .Values.global.github }}
+                  {{- if .Values.global.github.oauth }}
+                    {{- $clientSecret = .Values.global.github.oauth.clientSecret | default $clientSecret }}
+                  {{- end }}
+                {{- end }}
+                {{- if .Values.global.config }}
+                  {{- if .Values.global.config.auth }}
+                    {{- if .Values.global.config.auth.github }}
+                      {{- if .Values.global.config.auth.github.oauth }}
+                        {{- $clientSecret = .Values.global.config.auth.github.oauth.clientSecret | default $clientSecret }}
+                      {{- end }}
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              value: {{ $clientSecret | quote }}
+              {{- end }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE
+              value: {{ .Values.config.auth.github.oauth.scope | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL
+              value: {{ .Values.config.auth.github.oauth.baseUrl | quote }}
+            {{- if .Values.authConfig }}
+            - name: AGENTAPI_AUTH_CONFIG_FILE
+              value: "/etc/auth-config/auth-config.yaml"
+            {{- end }}
+            # Role-based environment files configuration
+            - name: AGENTAPI_ROLE_ENV_FILES_ENABLED
+              value: {{ .Values.roleEnvFiles.enabled | quote }}
+            - name: AGENTAPI_ROLE_ENV_FILES_PATH
+              value: {{ .Values.roleEnvFiles.path | quote }}
+            - name: AGENTAPI_ROLE_ENV_FILES_LOAD_DEFAULT
+              value: {{ .Values.roleEnvFiles.loadDefault | quote }}
+            {{- $githubEnterpriseEnabled := .Values.github.enterprise.enabled }}
+            {{- if .Values.global }}
+              {{- if .Values.global.github }}
+                {{- if .Values.global.github.enterprise }}
+                  {{- $githubEnterpriseEnabled = .Values.global.github.enterprise.enabled | default $githubEnterpriseEnabled }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if $githubEnterpriseEnabled }}
+            {{- $githubEnterpriseBaseUrl := .Values.github.enterprise.baseUrl }}
+            {{- if .Values.global }}
+              {{- if .Values.global.github }}
+                {{- if .Values.global.github.enterprise }}
+                  {{- $githubEnterpriseBaseUrl = .Values.global.github.enterprise.baseUrl | default $githubEnterpriseBaseUrl }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if $githubEnterpriseBaseUrl }}
+            - name: GITHUB_URL
+              value: {{ $githubEnterpriseBaseUrl | quote }}
+            {{- end }}
+            {{- $githubEnterpriseApiUrl := .Values.github.enterprise.apiUrl }}
+            {{- if .Values.global }}
+              {{- if .Values.global.github }}
+                {{- if .Values.global.github.enterprise }}
+                  {{- $githubEnterpriseApiUrl = .Values.global.github.enterprise.apiUrl | default $githubEnterpriseApiUrl }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if $githubEnterpriseApiUrl }}
+            - name: GITHUB_API
+              value: {{ $githubEnterpriseApiUrl | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.github.app.id }}
+            - name: GITHUB_APP_ID
+              value: {{ .Values.github.app.id | quote }}
+            {{- end }}
+            {{- if .Values.github.app.installationId }}
+            - name: GITHUB_INSTALLATION_ID
+              value: {{ .Values.github.app.installationId | quote }}
+            {{- end }}
+            - name: REPOSITORY_RESTRICTION
+              value: {{ .Values.github.app.repositoryRestriction | default false | quote }}
+            {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
+            - name: GITHUB_APP_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.github.app.privateKey.secretName }}
+                  key: {{ .Values.github.app.privateKey.key }}
+            - name: GITHUB_APP_PEM_PATH
+              value: "/etc/github-app/{{ .Values.github.app.privateKey.key }}"
+            {{- end }}
+            {{- $hostname := "" }}
+            {{- if .Values.global }}
+              {{- $hostname = .Values.global.hostname | default .Values.config.hostname }}
+            {{- else }}
+              {{- $hostname = .Values.config.hostname }}
+            {{- end }}
+            {{- if .Values.config.notification.baseUrl }}
+            - name: NOTIFICATION_BASE_URL
+              value: {{ .Values.config.notification.baseUrl | quote }}
+            {{- else if $hostname }}
+            - name: NOTIFICATION_BASE_URL
+              value: {{ printf "https://%s" $hostname | quote }}
+            {{- end }}
+            # Webhook configuration
+            {{- if .Values.config.webhook.baseUrl }}
+            - name: AGENTAPI_WEBHOOK_BASE_URL
+              value: {{ .Values.config.webhook.baseUrl | quote }}
+            {{- else if $hostname }}
+            - name: AGENTAPI_WEBHOOK_BASE_URL
+              value: {{ printf "https://%s" $hostname | quote }}
+            {{- end }}
+            # Static asset upload configuration
+            - name: AGENTAPI_ASSET_BACKEND
+              value: {{ $assetBackend | quote }}
+            {{ $assetPublicBaseURL := $asset.publicBaseUrl | default "" }}
+            {{ $assetHost := .Values.config.hostname | default "" }}
+            {{ if .Values.global }}
+              {{ $assetHost = .Values.global.apiHostname | default $assetHost }}
+            {{ end }}
+            {{ if and (eq $assetHost "") .Values.ingress.hosts }}
+              {{ $assetHost = (index .Values.ingress.hosts 0).host }}
+            {{ end }}
+            {{ if and (eq $assetPublicBaseURL "") $assetHost }}
+              {{ $assetPublicBaseURL = printf "https://%s" $assetHost }}
+            {{ end }}
+            - name: AGENTAPI_ASSET_PUBLIC_BASE_URL
+              value: {{ $assetPublicBaseURL | quote }}
+            - name: AGENTAPI_ASSET_STORAGE_PATH
+              value: {{ $assetStoragePath | quote }}
+            {{- if $assetS3.bucket }}
+            - name: AGENTAPI_ASSET_S3_BUCKET
+              value: {{ $assetS3.bucket | quote }}
+            {{- end }}
+            {{- if $assetS3.region }}
+            - name: AGENTAPI_ASSET_S3_REGION
+              value: {{ $assetS3.region | quote }}
+            {{- end }}
+            {{- if $assetS3.prefix }}
+            - name: AGENTAPI_ASSET_S3_PREFIX
+              value: {{ $assetS3.prefix | quote }}
+            {{- end }}
+            {{- if $assetS3.endpoint }}
+            - name: AGENTAPI_ASSET_S3_ENDPOINT
+              value: {{ $assetS3.endpoint | quote }}
+            {{- end }}
+            {{- if not $sessionManagerEnabled }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_BACKEND
+              value: {{ $sessionPersistenceBackend | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_PATH
+              value: {{ $sessionPersistencePath | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER
+              value: {{ $sessionPersistenceSuspendAfter | quote }}
+            {{- if $sessionPersistenceS3.bucket }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET
+              value: {{ $sessionPersistenceS3.bucket | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION
+              value: {{ $sessionPersistenceS3.region | default "garage" | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX
+              value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT
+              value: {{ $sessionPersistenceS3.endpoint | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.config.webhook.githubEnterpriseHost }}
+            - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
+              value: {{ .Values.config.webhook.githubEnterpriseHost | quote }}
+            {{- else if and .Values.github.enterprise.enabled .Values.github.enterprise.baseUrl }}
+            - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
+              value: {{ .Values.github.enterprise.baseUrl | trimPrefix "https://" | trimPrefix "http://" | trimSuffix "/" | quote }}
+            {{- end }}
+            # scia Google OAuth broker/proxy integration
+            {{- $scia := .Values.scia | default dict }}
+            {{- $sciaEnabled := true }}
+            {{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+              {{- $sciaEnabled = $scia.enabled }}
+            {{- end }}
+            {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
+            {{- $sciaHost := .Values.config.hostname | default "" }}
+            {{- if .Values.global }}
+              {{- $sciaHost = .Values.global.apiHostname | default $sciaHost }}
+            {{- end }}
+            {{- if and (eq $sciaHost "") .Values.ingress.hosts }}
+              {{- $sciaHost = (index .Values.ingress.hosts 0).host }}
+            {{- end }}
+            {{- if and (eq $sciaPublicBaseURL "") $sciaHost }}
+              {{- $sciaPublicBaseURL = printf "https://%s" $sciaHost }}
+            {{- end }}
+            {{- $sciaService := $scia.service | default dict }}
+            - name: AGENTAPI_SCIA_ENABLED
+              value: {{ $sciaEnabled | quote }}
+            - name: AGENTAPI_SCIA_PUBLIC_BASE_URL
+              value: {{ $sciaPublicBaseURL | quote }}
+            - name: AGENTAPI_SCIA_OAUTH_INTERNAL_URL
+              value: {{ $scia.oauthInternalUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.sciaServiceName" .) .Release.Namespace ($sciaService.port | default 8081)) | quote }}
+            - name: AGENTAPI_SCIA_PROXY_URL
+              value: {{ $scia.proxyUrl | default "" | quote }}
+            - name: AGENTAPI_SCIA_CREDENTIAL
+              value: {{ $scia.credential | default "" | quote }}
+            - name: AGENTAPI_SCIA_USER_NAMESPACE
+              value: {{ $scia.userNamespace | default "" | quote }}
+            - name: AGENTAPI_SCIA_NO_PROXY
+              value: {{ $scia.noProxy | default "localhost,127.0.0.1,.svc,.cluster.local" | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED
+              value: {{ dig "sessionSidecar" "enabled" true $scia | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE
+              value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.17.0" $scia | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE
+              value: {{ dig "sessionSidecar" "configImage" "busybox:1.36" $scia | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_PORT
+              value: {{ dig "sessionSidecar" "port" 18081 $scia | quote }}
+            - name: AGENTAPI_SCIA_GOOGLE_HOSTS
+              value: {{ $scia.googleHosts | default (list "www.googleapis.com") | join "," | quote }}
+            - name: AGENTAPI_SCIA_GOOGLE_PATHS
+              value: {{ $scia.googlePaths | default (list "/calendar/v3/*") | join "," | quote }}
+            - name: AGENTAPI_SCIA_TODOIST_CREDENTIAL
+              value: {{ $scia.todoistCredential | default "default.todoist" | quote }}
+            - name: AGENTAPI_SCIA_TODOIST_HOSTS
+              value: {{ $scia.todoistHosts | default (list "api.todoist.com") | join "," | quote }}
+            - name: AGENTAPI_SCIA_TODOIST_PATHS
+              value: {{ $scia.todoistPaths | default (list "/api/v1/*") | join "," | quote }}
+            - name: SESSION_CONTROL_LONG_POLL_ENABLED
+              value: {{ dig "enabled" false (.Values.sessionControl | default dict) | quote }}
+            - name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED
+              value: {{ dig "directRuntimeEnabled" false (.Values.sessionControl | default dict) | quote }}
+            {{- if and (not (dig "enabled" false (.Values.sessionManager | default dict))) (dig "enabled" false (.Values.kubernetesSession | default dict)) }}
+            # Deprecated in-process Kubernetes Session Management configuration.
+            # This compatibility path is omitted as soon as the dedicated
+            # session-manager workload is enabled.
+            - name: AGENTAPI_K8S_SESSION_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: AGENTAPI_K8S_SESSION_IMAGE
+              value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
+              value: {{ .Values.kubernetesSession.networkFilterImage | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST
+              value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT
+              value: {{ dig "networkFilter" "resources" "limits" "cpu" "1000m" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_REQUEST
+              value: {{ dig "networkFilter" "resources" "requests" "memory" "256Mi" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_LIMIT
+              value: {{ dig "networkFilter" "resources" "limits" "memory" "512Mi" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_REQUEST
+              value: {{ dig "networkFilter" "initResources" "requests" "cpu" "50m" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_LIMIT
+              value: {{ dig "networkFilter" "initResources" "limits" "cpu" "100m" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_REQUEST
+              value: {{ dig "networkFilter" "initResources" "requests" "memory" "32Mi" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_LIMIT
+              value: {{ dig "networkFilter" "initResources" "limits" "memory" "64Mi" .Values.kubernetesSession | quote }}
+            - name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY
+              value: {{ .Values.kubernetesSession.imagePullPolicy | quote }}
+            - name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT
+              value: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" | quote }}
+            - name: AGENTAPI_K8S_SESSION_BASE_PORT
+              value: {{ .Values.kubernetesSession.basePort | quote }}
+            - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
+              value: {{ .Values.kubernetesSession.resources.requests.cpu | quote }}
+            - name: AGENTAPI_K8S_SESSION_CPU_LIMIT
+              value: {{ .Values.kubernetesSession.resources.limits.cpu | quote }}
+            - name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST
+              value: {{ .Values.kubernetesSession.resources.requests.memory | quote }}
+            - name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT
+              value: {{ .Values.kubernetesSession.resources.limits.memory | quote }}
+            - name: AGENTAPI_K8S_SESSION_PVC_ENABLED
+              value: {{ .Values.kubernetesSession.pvc.enabled | quote }}
+            - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS
+              value: {{ .Values.kubernetesSession.pvc.storageClass | quote }}
+            - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE
+              value: {{ .Values.kubernetesSession.pvc.storageSize | quote }}
+            - name: AGENTAPI_K8S_SESSION_POD_START_TIMEOUT
+              value: {{ .Values.kubernetesSession.podStartTimeout | quote }}
+            - name: AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT
+              value: {{ .Values.kubernetesSession.podStopTimeout | quote }}
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
+              {{- $provisionerProxyURL := dig "provisioner" "proxyUrl" "" .Values.kubernetesSession }}
+              {{- if not $provisionerProxyURL }}
+                {{- $controlPlaneService := .Values.controlPlaneService | default dict }}
+                {{- $controlEnabled := true }}
+                {{- if hasKey $controlPlaneService "enabled" }}
+                  {{- $controlEnabled = $controlPlaneService.enabled }}
+                {{- end }}
+                {{- if $controlEnabled }}
+                  {{- $provisionerProxyURL = printf "http://%s.%s.svc.cluster.local:%v" ($controlPlaneService.name | default "control") .Release.Namespace ($controlPlaneService.port | default 8080) }}
+                {{- else }}
+                  {{- $provisionerProxyURL = printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port }}
+                {{- end }}
+              {{- end }}
+              value: {{ $provisionerProxyURL | quote }}
+            {{- if or .Values.github.token (and .Values.github.app.id .Values.github.app.privateKey.secretName) }}
+            - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
+              value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}
+            {{- end }}
+            {{- if or .Values.github.enterprise.apiUrl .Values.github.enterprise.baseUrl }}
+            - name: AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME
+              value: {{ printf "%s-github-config" (include "agentapi-proxy.fullname" .) | quote }}
+            {{- end }}
+            {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations }}
+            - name: AGENTAPI_K8S_SESSION_CONFIG_FILE
+              value: "/etc/k8s-session-config/k8s-session-config.yaml"
+            {{- end }}
+            {{- if .Values.kubernetesSession.podTemplate }}
+            - name: AGENTAPI_K8S_SESSION_POD_TEMPLATE_FILE
+              value: "/etc/k8s-session-config/session-pod-template.yaml"
+            {{- end }}
+            # Slack Integration configuration
+            # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar)
+            {{- $slackIntegration := (.Values.kubernetesSession).slackIntegration }}
+            {{- $slackBotToken := ($slackIntegration).botToken }}
+            {{- if and $slackBotToken $slackBotToken.secretName }}
+            - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME
+              value: {{ $slackBotToken.secretName | quote }}
+            - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY
+              value: {{ $slackBotToken.key | default "bot-token" | quote }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $slackBotToken.secretName | quote }}
+                  key: {{ $slackBotToken.key | default "bot-token" | quote }}
+                  optional: true
+            {{- end }}
+            # OpenTelemetry Collector configuration
+            {{- if .Values.kubernetesSession.otelCollector.enabled }}
+            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED
+              value: {{ .Values.kubernetesSession.otelCollector.enabled | quote }}
+            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL
+              value: {{ .Values.kubernetesSession.otelCollector.scrapeInterval | quote }}
+            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT
+              value: {{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | quote }}
+            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT
+              value: {{ .Values.kubernetesSession.otelCollector.exporterPort | quote }}
+            {{- end }}
+            # Settings base secret (proxy-side merge of settings.json)
+            - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET
+              value: {{ .Values.kubernetesSession.settingsBaseSecret | quote }}
+            {{- with .Values.kubernetesSession.provisioner.tokenSecretRef.name }}
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.kubernetesSession.provisioner.tokenSecretRef.key | quote }}}}
+            {{- end }}
+            {{- end }}
+            {{- $apiEncryptionRef := dig "encryption" "keySecretRef" (dict) $api }}
+            {{- if (dig "name" "" $apiEncryptionRef) }}
+            - name: AGENTAPI_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ dig "name" "" $apiEncryptionRef | quote }}
+                  key: {{ dig "key" "encryption-key" $apiEncryptionRef | quote }}
+            {{- else if .Values.config.encryption.key }}
+            - name: AGENTAPI_ENCRYPTION_KEY
+              value: {{ .Values.config.encryption.key | quote }}
+            {{- end }}
+            # GitHub Token configuration (for backward compatibility)
+            {{- $githubTokenRefName := dig "tokenRef" "name" "" .Values.github }}
+            {{- if $githubTokenRefName }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $githubTokenRefName | quote }}
+                  key: {{ dig "tokenRef" "key" "github-token" .Values.github | quote }}
+            {{- else if .Values.github.token }}
+            - name: GITHUB_TOKEN
+              value: {{ .Values.github.token | quote }}
+            {{- end }}
+            # Claude Code configuration
+            {{- if .Values.config.claude.args }}
+            - name: CLAUDE_ARGS
+              value: {{ .Values.config.claude.args | quote }}
+            {{- end }}
+            # OAuth configuration
+            {{- if .Values.config.auth.github.oauth.allowedRedirectUris }}
+            - name: OAUTH_ALLOWED_REDIRECT_URIS
+              value: {{ .Values.config.auth.github.oauth.allowedRedirectUris | quote }}
+            {{- end }}
+            # VAPID configuration
+            {{- if .Values.config.vapid.publicKey }}
+            - name: VAPID_PUBLIC_KEY
+              value: {{ .Values.config.vapid.publicKey | quote }}
+            {{- end }}
+            {{- $vapidPrivateKeyRefName := dig "privateKeyRef" "name" "" .Values.config.vapid }}
+            {{- if $vapidPrivateKeyRefName }}
+            - name: VAPID_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $vapidPrivateKeyRefName | quote }}
+                  key: {{ dig "privateKeyRef" "key" "vapid-private-key" .Values.config.vapid | quote }}
+            {{- else if .Values.config.vapid.privateKey }}
+            - name: VAPID_PRIVATE_KEY
+              value: {{ .Values.config.vapid.privateKey | quote }}
+            {{- end }}
+            {{- if .Values.config.vapid.contactEmail }}
+            - name: VAPID_CONTACT_EMAIL
+              value: {{ .Values.config.vapid.contactEmail | quote }}
+            {{- end }}
+            # API Redis client. The root redis value only deploys the optional
+            # bundled server and supplies its derived address/Secret.
+            {{- if $apiRedisAddr }}
+            - name: AGENTAPI_REDIS_ADDR
+              value: {{ $apiRedisAddr | quote }}
+            {{- $apiRedisSecret := $apiRedis.existingSecret | default "" }}
+            {{- if and (not $apiRedisSecret) .Values.redis.enabled .Values.redis.auth.enabled }}
+            {{- $apiRedisSecret = printf "%s-redis" (include "agentapi-proxy.fullname" .) }}
+            {{- end }}
+            {{- with $apiRedisSecret }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $apiRedis.existingSecretPasswordKey | default "redis-password" | quote }}
+            {{- end }}
+            - {name: AGENTAPI_REDIS_DB, value: {{ $apiRedis.db | default 0 | quote }}}
+            - {name: AGENTAPI_REDIS_TLS_ENABLED, value: {{ $apiRedis.tlsEnabled | default false | quote }}}
+            - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $apiRedis.dialTimeout | default "5s" | quote }}}
+            - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $apiRedis.readTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $apiRedis.writeTimeout | default "3s" | quote }}}
+            {{- end }}
+            {{- $workerTokenRef := dig "workerControl" "tokenSecretRef" (dict) $api }}
+            {{- with (dig "name" "" $workerTokenRef) }}
+            - name: AGENTAPI_WORKER_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ dig "key" "token" $workerTokenRef | quote }}
+            {{- end }}
+            {{- if (dig "enabled" false (.Values.sessionManager | default dict)) }}
+            - name: AGENTAPI_SESSION_MANAGER_API_URL
+              value: {{ required "api.sessionManager.url is required when sessionManager is enabled" (dig "sessionManager" "url" "" $api) | quote }}
+            {{- $managerClientTokenRef := dig "sessionManager" "tokenSecretRef" (dict) $api }}
+            - name: AGENTAPI_SESSION_MANAGER_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "api.sessionManager.tokenSecretRef.name is required when sessionManager is enabled" (dig "name" "" $managerClientTokenRef) | quote }}
+                  key: {{ dig "key" "token" $managerClientTokenRef | quote }}
+            {{- $externalRegistration := dig "externalRegistration" (dict) (.Values.sessionManager | default dict) }}
+            {{- if (dig "enabled" false $externalRegistration) }}
+            {{- $externalHMACRef := dig "hmacSecretRef" (dict) $externalRegistration }}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.externalRegistration.hmacSecretRef.name is required when external registration is enabled" (dig "name" "" $externalHMACRef) | quote }}
+                  key: {{ dig "key" "hmac-secret" $externalHMACRef | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range $apiEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- with $apiEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            {{- if .Values.authConfig }}
+            - name: auth-config
+              mountPath: /etc/auth-config
+              readOnly: true
+            {{- end }}
+            {{- if .Values.roleEnvFiles.enabled }}
+            - name: role-env-files
+              mountPath: {{ .Values.roleEnvFiles.path }}
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
+            - name: github-app-private-key
+              mountPath: /etc/github-app
+              readOnly: true
+            {{- end }}
+            {{- if and (not (dig "enabled" false (.Values.sessionManager | default dict))) (or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate) }}
+            - name: k8s-session-config
+              mountPath: /etc/k8s-session-config
+              readOnly: true
+            {{- end }}
+            {{- if and $assetEnabled (eq $assetBackend "nginx") }}
+            - name: asset-storage
+              mountPath: {{ $assetStoragePath | quote }}
+            {{- end }}
+            {{- if and (not $sessionManagerEnabled) (eq $sessionPersistenceBackend "volume") }}
+            - name: session-state
+              mountPath: {{ $sessionPersistencePath | quote }}
+            {{- end }}
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $apiResources | nindent 12 }}
+      volumes:
+        {{- if .Values.authConfig }}
+        - name: auth-config
+          configMap:
+            name: {{ include "agentapi-proxy.fullname" . }}-auth-config
+        {{- end }}
+        {{- if and .Values.roleEnvFiles.enabled .Values.roleEnvFiles.files }}
+        - name: role-env-files
+          projected:
+            sources:
+            {{- range $filename, $config := .Values.roleEnvFiles.files }}
+            {{- if and $config.secretName $config.key }}
+            - secret:
+                name: {{ $config.secretName }}
+                items:
+                - key: {{ $config.key }}
+                  path: {{ $filename }}
+            {{- end }}
+            {{- end }}
+        {{- end }}
+        {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
+        - name: github-app-private-key
+          secret:
+            secretName: {{ .Values.github.app.privateKey.secretName }}
+            defaultMode: 0440
+        {{- end }}
+        {{- if and (not (dig "enabled" false (.Values.sessionManager | default dict))) (or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate) }}
+        - name: k8s-session-config
+          configMap:
+            name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config
+        {{- end }}
+        {{- if and $assetEnabled (eq $assetBackend "nginx") }}
+        - name: asset-storage
+          {{ if $assetPersistenceEnabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "agentapi-proxy.fullname" . }}-assets
+          {{ else }}
+          emptyDir: {}
+          {{ end }}
+        {{- end }}
+        {{- if and (not $sessionManagerEnabled) (eq $sessionPersistenceBackend "volume") }}
+        - name: session-state
+          persistentVolumeClaim:
+            claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
+        {{- end }}
+        {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with ($api.nodeSelector | default .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($api.affinity | default .Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($api.tolerations | default .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

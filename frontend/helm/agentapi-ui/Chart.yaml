@@ -1,0 +1,16 @@
+apiVersion: v2
+name: agentapi-ui
+description: A Helm chart for agentapi-ui Next.js application
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+home: https://github.com/ccplant/ccplant
+sources:
+  - https://github.com/ccplant/ccplant
+maintainers:
+  - name: agentapi-ui team
+keywords:
+  - nextjs
+  - ui
+  - agentapi
+  - frontend

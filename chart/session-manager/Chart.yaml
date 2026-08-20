@@ -1,0 +1,6 @@
+apiVersion: v2
+name: session-manager
+description: Stateless Kubernetes execution plane for a parent ccplant API
+type: application
+version: 0.1.0
+appVersion: "1.173.0"

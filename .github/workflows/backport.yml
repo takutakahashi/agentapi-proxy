@@ -1,0 +1,48 @@
+name: Backport components
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Component to backport
+        required: true
+        type: choice
+        options:
+          - backend
+          - frontend
+
+permissions:
+  contents: read
+
+jobs:
+  backport:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select repository
+        id: target
+        env:
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          if [ "${COMPONENT}" = "backend" ]; then
+            echo "repo=takutakahashi/agentapi-proxy" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=takutakahashi/agentapi-ui" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Split and push component
+        env:
+          COMPONENT: ${{ inputs.component }}
+          TARGET_REPO: ${{ steps.target.outputs.repo }}
+          BACKPORT_TOKEN: ${{ secrets.BACKPORT_TOKEN }}
+        run: |
+          branch="monorepo-sync/${GITHUB_RUN_ID}"
+          git subtree split --prefix="${COMPONENT}" -b component-split
+          git push "https://x-access-token:${BACKPORT_TOKEN}@github.com/${TARGET_REPO}.git" "component-split:refs/heads/${branch}"
+          GH_TOKEN="${BACKPORT_TOKEN}" gh pr create \
+            --repo "${TARGET_REPO}" \
+            --head "${branch}" \
+            --base main \
+            --title "chore: sync ${COMPONENT} from ccplant monorepo" \
+            --body "Backport from ccplant/ccplant@${GITHUB_SHA}."

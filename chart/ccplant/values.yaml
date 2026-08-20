@@ -1,0 +1,26 @@
+global:
+  hostname: agentapi.local
+  apiHostname: api.agentapi.local
+  ingress:
+    className: nginx
+    tls:
+      enabled: false
+
+backend:
+  enabled: true
+  # Full runtime image used by session pods and compatibility workloads.
+  image:
+    repository: ghcr.io/ccplant/ccplant-backend
+  # Lightweight image used only by the backend API Deployment.
+  api:
+    image:
+      repository: ghcr.io/ccplant/ccplant-api
+  ingress:
+    enabled: false
+
+frontend:
+  enabled: true
+  image:
+    repository: ghcr.io/ccplant/ccplant-frontend
+  ingress:
+    enabled: false

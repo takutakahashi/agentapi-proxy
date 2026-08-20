@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "agentapi-proxy Native",
+  "version": "0.1.0",
+  "identifier": "com.agentapi.native-ui",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run sidecar:build && bun run dev",
+    "beforeBuildCommand": "bun run sidecar:build && bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "dashboard",
+        "title": "agentapi-proxy Native",
+        "width": 760,
+        "height": 600,
+        "minWidth": 520,
+        "minHeight": 420,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "externalBin": ["binaries/ccplant"],
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "category": "DeveloperTool",
+    "shortDescription": "Native ESM dashboard",
+    "longDescription": "Menu-bar dashboard for the agentapi-proxy native External Session Manager."
+  },
+  "plugins": {}
+}

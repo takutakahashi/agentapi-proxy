@@ -1,0 +1,731 @@
+
+<!DOCTYPE HTML>
+<html lang="ja" >
+    <head>
+        <meta charset="UTF-8">
+        <title>Custom Webhook · agentapi-ui ドキュメント</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="HonKit 6.1.4">
+        
+        
+        
+    
+    <link rel="stylesheet" href="../../gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../../gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="../../gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="jsonpath.html" />
+    
+    
+    <link rel="prev" href="../github/" />
+    
+
+    </head>
+    <body>
+        
+<div class="book honkit-cloak">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="検索ワードを入力" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+
+    
+
+    
+        
+        <li class="header">はじめに</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="../../">
+            
+                <a href="../../">
+            
+                    
+                    agentapi-ui ドキュメント
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.2" data-path="../../getting-started/">
+            
+                <a href="../../getting-started/">
+            
+                    
+                    クイックスタート
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.3" data-path="../../getting-started/concepts.html">
+            
+                <a href="../../getting-started/concepts.html">
+            
+                    
+                    基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Webhook</li>
+        
+        
+    
+        <li class="chapter " data-level="2.1" data-path="../">
+            
+                <a href="../">
+            
+                    
+                    Webhook とは
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.1.1" data-path="../introduction/overview.html">
+            
+                <a href="../introduction/overview.html">
+            
+                    
+                    概要と基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.1.2" data-path="../introduction/agentapi-proxy.html">
+            
+                <a href="../introduction/agentapi-proxy.html">
+            
+                    
+                    agentapi-proxy における Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.2" data-path="../setup/">
+            
+                <a href="../setup/">
+            
+                    
+                    セットアップ
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="../github/">
+            
+                <a href="../github/">
+            
+                    
+                    GitHub Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter active" data-level="2.4" data-path="./">
+            
+                <a href="./">
+            
+                    
+                    Custom Webhook
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.4.1" data-path="jsonpath.html">
+            
+                <a href="jsonpath.html">
+            
+                    
+                    JSONPath 条件の書き方
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.2" data-path="operators.html">
+            
+                <a href="operators.html">
+            
+                    
+                    演算子リファレンス
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.3" data-path="signature.html">
+            
+                <a href="signature.html">
+            
+                    
+                    署名検証の設定
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.5" data-path="../integrations/">
+            
+                <a href="../integrations/">
+            
+                    
+                    サービス連携例
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.6" data-path="../troubleshooting/">
+            
+                <a href="../troubleshooting/">
+            
+                    
+                    トラブルシューティング
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">API</li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" data-path="../../api/">
+            
+                <a href="../../api/">
+            
+                    
+                    API の概要
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.2" data-path="../../api/authentication.html">
+            
+                <a href="../../api/authentication.html">
+            
+                    
+                    認証
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.3" data-path="../../api/endpoints.html">
+            
+                <a href="../../api/endpoints.html">
+            
+                    
+                    エンドポイント
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">デプロイメント</li>
+        
+        
+    
+        <li class="chapter " data-level="4.1" data-path="../../deployment/">
+            
+                <a href="../../deployment/">
+            
+                    
+                    デプロイ方法
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="4.2" data-path="../../deployment/configuration.html">
+            
+                <a href="../../deployment/configuration.html">
+            
+                    
+                    設定ガイド
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">リファレンス</li>
+        
+        
+    
+        <li class="chapter " data-level="5.1" data-path="../../reference/glossary.html">
+            
+                <a href="../../reference/glossary.html">
+            
+                    
+                    用語集
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="5.2" data-path="../../reference/faq.html">
+            
+                <a href="../../reference/faq.html">
+            
+                    
+                    FAQ
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://github.com/honkit/honkit" target="blank" class="gitbook-link">
+            HonKitで公開 
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="../.." >Custom Webhook</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h1 id="カスタム-webhook">カスタム Webhook</h1>
+<p>Custom Webhook 機能を使うと、GitHub 以外の任意のサービスからの Webhook を受け取り、AI エージェントと連携できます。JSONPath を使った柔軟な条件設定により、様々なユースケースに対応できます。</p>
+<h2 id="このセクションで学ぶこと">このセクションで学ぶこと</h2>
+<ul>
+<li>Custom Webhook の基本的な仕組み</li>
+<li>JSONPath を使った条件設定</li>
+<li>演算子の使い方</li>
+<li>署名検証の設定</li>
+<li>実用的な設定例</li>
+</ul>
+<h2 id="custom-webhook-が解決する課題">Custom Webhook が解決する課題</h2>
+<p>GitHub Webhook は GitHub 特化型の条件設定を提供していますが、他のサービスには対応していません。Custom Webhook を使うことで：</p>
+<p>✅ <strong>任意の JSON 構造に対応</strong>: どんなペイロード形式でも処理可能
+✅ <strong>柔軟な条件評価</strong>: JSONPath で複雑な条件を記述
+✅ <strong>複数のサービスに対応</strong>: Slack、Datadog、PagerDuty など
+✅ <strong>標準的な署名検証</strong>: HMAC による安全な通信</p>
+<h2 id="対応サービスの例">対応サービスの例</h2>
+<p>Custom Webhook は以下のようなサービスと連携できます：</p>
+<table>
+<thead>
+<tr>
+<th>サービス</th>
+<th>ユースケース</th>
+<th>詳細</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Slack</strong></td>
+<td>インシデント通知、チャンネルイベント</td>
+<td><a href="../integrations/slack.md">設定例</a></td>
+</tr>
+<tr>
+<td><strong>Datadog</strong></td>
+<td>モニタリングアラート、メトリクス異常</td>
+<td><a href="../integrations/datadog.md">設定例</a></td>
+</tr>
+<tr>
+<td><strong>PagerDuty</strong></td>
+<td>インシデント管理、エスカレーション</td>
+<td><a href="../integrations/pagerduty.md">設定例</a></td>
+</tr>
+<tr>
+<td><strong>カスタムサービス</strong></td>
+<td>独自のアプリケーション</td>
+<td><a href="../integrations/others.md">設定例</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="custom-webhook-の構造">Custom Webhook の構造</h2>
+<p>Custom Webhook は以下の要素で構成されます：</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"name"</span>: <span class="hljs-string">"Webhook 名"</span>,
+  <span class="hljs-string">"type"</span>: <span class="hljs-string">"custom"</span>,
+  <span class="hljs-string">"triggers"</span>: [
+    {
+      <span class="hljs-string">"name"</span>: <span class="hljs-string">"トリガー名"</span>,
+      <span class="hljs-string">"priority"</span>: <span class="hljs-number">10</span>,
+      <span class="hljs-string">"enabled"</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-string">"conditions"</span>: {
+        <span class="hljs-string">"jsonpath"</span>: [
+          {
+            <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>,
+            <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+            <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>
+          }
+        ]
+      },
+      <span class="hljs-string">"session_config"</span>: {
+        <span class="hljs-string">"initial_message_template"</span>: <span class="hljs-string">"アラート: {{.event.message}}"</span>,
+        <span class="hljs-string">"tags"</span>: {
+          <span class="hljs-string">"source"</span>: <span class="hljs-string">"custom"</span>
+        }
+      }
+    }
+  ]
+}
+</code></pre>
+<h3 id="主要なフィールド">主要なフィールド</h3>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>Webhook の識別名</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td><code>custom</code> を指定</td>
+</tr>
+<tr>
+<td><code>triggers</code></td>
+<td>トリガー条件の配列（複数設定可能）</td>
+</tr>
+<tr>
+<td><code>triggers[].conditions.jsonpath</code></td>
+<td>JSONPath 条件の配列</td>
+</tr>
+<tr>
+<td><code>triggers[].session_config</code></td>
+<td>セッション設定とテンプレート</td>
+</tr>
+</tbody>
+</table>
+<h2 id="クイックスタート">クイックスタート</h2>
+<h3 id="1-custom-webhook-の作成">1. Custom Webhook の作成</h3>
+<p>UI または API で Custom Webhook を作成します。</p>
+<pre><code class="lang-bash">curl -X POST https://agentapi.example.com/webhooks \
+  -H <span class="hljs-string">"Authorization: Bearer YOUR_TOKEN"</span> \
+  -H <span class="hljs-string">"Content-Type: application/json"</span> \
+  -d <span class="hljs-string">'{
+    "name": "My Custom Webhook",
+    "type": "custom",
+    "triggers": [...]
+  }'</span>
+</code></pre>
+<h3 id="2-webhook-url-を取得">2. Webhook URL を取得</h3>
+<p>レスポンスから Webhook URL と Secret を取得します：</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"id"</span>: <span class="hljs-string">"webhook-abc-123"</span>,
+  <span class="hljs-string">"webhook_url"</span>: <span class="hljs-string">"https://agentapi.example.com/hooks/custom/webhook-abc-123"</span>,
+  <span class="hljs-string">"secret"</span>: <span class="hljs-string">"64文字のHEX文字列"</span>
+}
+</code></pre>
+<h3 id="3-外部サービスに設定">3. 外部サービスに設定</h3>
+<p>Webhook URL を外部サービスに登録し、Secret を設定します。</p>
+<h3 id="4-テスト送信">4. テスト送信</h3>
+<pre><code class="lang-bash">curl -X POST https://agentapi.example.com/hooks/custom/webhook-abc-123 \
+  -H <span class="hljs-string">"X-Signature: sha256=computed-signature"</span> \
+  -H <span class="hljs-string">"Content-Type: application/json"</span> \
+  -d <span class="hljs-string">'{
+    "event": {
+      "type": "alert",
+      "message": "Test alert"
+    }
+  }'</span>
+</code></pre>
+<h2 id="次のステップ">次のステップ</h2>
+<ul>
+<li><a href="overview.md">概要と仕組み</a> - Custom Webhook の詳細な説明</li>
+<li><a href="jsonpath.html">JSONPath 条件の書き方</a> - 条件設定の基礎</li>
+<li><a href="operators.html">演算子リファレンス</a> - 利用可能な演算子一覧</li>
+<li><a href="signature.html">署名検証の設定</a> - セキュリティ設定</li>
+</ul>
+<h2 id="よくある質問">よくある質問</h2>
+<p><strong>Q: GitHub Webhook と Custom Webhook の違いは？</strong>
+A: GitHub Webhook は GitHub 専用の条件設定を提供します。Custom Webhook は JSONPath を使って任意の JSON 構造に対応できます。</p>
+<p><strong>Q: 複数の条件を設定できますか？</strong>
+A: はい、JSONPath 条件を配列で複数指定できます。すべての条件が満たされた場合（AND 条件）にトリガーが発火します。</p>
+<p><strong>Q: 署名検証は必須ですか？</strong>
+A: はい、セキュリティのため署名検証が必須です。HMAC-SHA256 による検証を推奨します。</p>
+<p><strong>Q: ペイロードサイズに制限はありますか？</strong>
+A: 最大 1MB までのペイロードを受け付けます。</p>
+<h2 id="まとめ">まとめ</h2>
+<p>Custom Webhook を使うことで、GitHub 以外の任意のサービスと agentapi-proxy を連携できます。JSONPath による柔軟な条件設定と、標準的な署名検証により、安全で強力な統合が実現できます。</p>
+<p>次のページで、Custom Webhook の仕組みを詳しく見ていきましょう。</p>
+
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="../github/" class="navigation navigation-prev " aria-label="Previous page: GitHub Webhook">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="jsonpath.html" class="navigation navigation-next " aria-label="Next page: JSONPath 条件の書き方">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"Custom Webhook","level":"2.4","depth":1,"next":{"title":"JSONPath 条件の書き方","level":"2.4.1","depth":2,"path":"webhook/custom/jsonpath.md","ref":"webhook/custom/jsonpath.md","articles":[]},"previous":{"title":"GitHub Webhook","level":"2.3","depth":1,"path":"webhook/github/README.md","ref":"webhook/github/README.md","articles":[]},"articles":[{"title":"JSONPath 条件の書き方","level":"2.4.1","depth":2,"path":"webhook/custom/jsonpath.md","ref":"webhook/custom/jsonpath.md","articles":[]},{"title":"演算子リファレンス","level":"2.4.2","depth":2,"path":"webhook/custom/operators.md","ref":"webhook/custom/operators.md","articles":[]},{"title":"署名検証の設定","level":"2.4.3","depth":2,"path":"webhook/custom/signature.md","ref":"webhook/custom/signature.md","articles":[]}],"dir":"ltr"},"config":{"plugins":[],"root":".","styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"pluginsConfig":{"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56},"embedFonts":false},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"title":"agentapi-ui ドキュメント","language":"ja","gitbook":"3.2.3","description":"agentapi-ui の完全なドキュメント"},"file":{"path":"webhook/custom/README.md","mtime":"2026-01-12T08:05:59.611Z","type":"markdown"},"gitbook":{"version":"6.1.4","time":"2026-01-12T08:15:40.503Z"},"basePath":"../..","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <noscript>
+        <style>
+            .honkit-cloak {
+                display: block !important;
+            }
+        </style>
+    </noscript>
+    <script>
+        // Restore sidebar state as critical path for prevent layout shift
+        function __init__getSidebarState(defaultValue){
+            var baseKey = "";
+            var key = baseKey + ":sidebar";
+            try {
+                var value = localStorage[key];
+                if (value === undefined) {
+                    return defaultValue;
+                }
+                var parsed = JSON.parse(value);
+                return parsed == null ? defaultValue : parsed;
+            } catch (e) {
+                return defaultValue;
+            }
+        }
+        function __init__restoreLastSidebarState() {
+            var isMobile = window.matchMedia("(max-width: 600px)").matches;
+            if (isMobile) {
+                // Init last state if not mobile
+                return;
+            }
+            var sidebarState = __init__getSidebarState(true);
+            var book = document.querySelector(".book");
+            // Show sidebar if it enabled
+            if (sidebarState && book) {
+                book.classList.add("without-animation", "with-summary");
+            }
+        }
+
+        try {
+            __init__restoreLastSidebarState();
+        } finally {
+            var book = document.querySelector(".book");
+            book.classList.remove("honkit-cloak");
+        }
+    </script>
+    <script src="../../gitbook/gitbook.js"></script>
+    <script src="../../gitbook/theme.js"></script>
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="../../gitbook/@honkit/honkit-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+

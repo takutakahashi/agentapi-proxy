@@ -1,0 +1,59 @@
+name: Helm Chart Release to OCI Registry
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  CHART_NAME: agentapi-ui
+
+jobs:
+  helm-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.14.0'
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract version from release tag
+      id: release_version
+      run: |
+        RELEASE_VERSION=${GITHUB_REF#refs/tags/}
+        echo "version=${RELEASE_VERSION}" >> $GITHUB_OUTPUT
+        echo "Release version: ${RELEASE_VERSION}"
+    
+    - name: Update Chart.yaml with release version
+      run: |
+        sed -i "s/^version:.*/version: ${{ steps.release_version.outputs.version }}/" helm/agentapi-ui/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"${{ steps.release_version.outputs.version }}\"/" helm/agentapi-ui/Chart.yaml
+        echo "Updated Chart.yaml:"
+        cat helm/agentapi-ui/Chart.yaml
+    
+    - name: Package Helm chart
+      run: |
+        helm package helm/agentapi-ui/ --destination ./charts
+    
+    - name: Push Helm chart to OCI registry
+      run: |
+        helm push ./charts/${{ env.CHART_NAME }}-${{ steps.release_version.outputs.version }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+    
+    - name: Verify chart push
+      run: |
+        echo "Helm chart pushed successfully to oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }}:${{ steps.release_version.outputs.version }}"

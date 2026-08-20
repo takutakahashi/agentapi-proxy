@@ -1,89 +1,223 @@
 name: CI
 
 on:
-  push:
-    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+  push:
+    branches: [main]
 
-env:
-  GO_VERSION: "1.25"
+permissions:
+  contents: read
 
 jobs:
-  ci:
+  backend:
     runs-on: ubuntu-latest
-    
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go test ./...
+        working-directory: backend
+      - run: go build ./...
+        working-directory: backend
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
+  api-image:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API-only image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          platforms: ${{ matrix.platform }}
+          push: false
+          cache-from: type=gha,scope=api-image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=api-image-${{ matrix.arch }}
+      - name: Smoke-test API-only image
+        if: matrix.arch == 'amd64'
+        run: |
+          docker build --target api --tag ccplant-api:test ./backend
+          container_id=$(docker run --detach --publish 127.0.0.1::8080 ccplant-api:test)
+          trap 'docker rm --force "$container_id" >/dev/null' EXIT
+          host_port=$(docker port "$container_id" 8080/tcp | sed 's/.*://')
+          for attempt in {1..30}; do
+            if curl --fail --silent "http://127.0.0.1:${host_port}/health" >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 1
+          done
+          docker run --rm ccplant-api:test worker --help >/dev/null
+          test "$(docker exec "$container_id" id -u)" = 999
+          docker exec "$container_id" codex --version
+          for command in claude cursor-agent docker git mise uv github-mcp-server otelcol node npm; do
+            if docker exec "$container_id" sh -c "command -v $command"; then
+              echo "unexpected runtime tool: $command"
+              exit 1
+            fi
+          done
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-v2
-        restore-keys: |
-          ${{ runner.os }}-go-
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - run: bun install --frozen-lockfile
+        working-directory: frontend
+      - run: bun run type-check
+        working-directory: frontend
+      - run: bun run test
+        working-directory: frontend
+      - run: bun run build
+        working-directory: frontend
 
-    - name: Cache agentapi binary
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/agentapi
-        key: ${{ runner.os }}-agentapi-${{ hashFiles('**/go.mod') }}-v2
-        restore-keys: |
-          ${{ runner.os }}-agentapi-
+  native:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: native/src-tauri -> target
+      - run: bun install --frozen-lockfile
+        working-directory: native
+      - run: bun run check
+        working-directory: native
+      - run: bun run sidecar:build
+        working-directory: native
+      - run: bun run tauri build --no-bundle
+        working-directory: native
 
-    - name: Download agentapi binary
-      run: |
-        mkdir -p ~/.cache/agentapi
-        if [ ! -f ~/.cache/agentapi/agentapi ]; then
-          echo "Downloading agentapi binary..."
-          curl -L -o ~/.cache/agentapi/agentapi https://github.com/coder/agentapi/releases/latest/download/agentapi-linux-amd64
-          chmod +x ~/.cache/agentapi/agentapi
-        else
-          echo "Using cached agentapi binary"
-        fi
-        sudo ln -sf ~/.cache/agentapi/agentapi /usr/local/bin/agentapi
+  charts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: agentapi-proxy
+            path: backend/helm/agentapi-proxy
+            dependencies: true
+          - name: agentapi-ui
+            path: frontend/helm/agentapi-ui
+            dependencies: false
+          - name: ccplant
+            path: chart/ccplant
+            dependencies: true
+          - name: session-manager
+            path: chart/session-manager
+            dependencies: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - name: Build dependencies
+        if: matrix.dependencies
+        run: helm dependency build "${{ matrix.path }}"
+      - run: helm lint "${{ matrix.path }}" --strict
+      - name: Render chart
+        run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Cache Claude Code
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/claude-code
-        key: ${{ runner.os }}-claude-code-${{ hashFiles('**/go.mod') }}-v2
-        restore-keys: |
-          ${{ runner.os }}-claude-code-
-
-    - name: Install Claude Code
-      run: |
-        mkdir -p ~/.cache/claude-code
-        if [ ! -f ~/.cache/claude-code/claude ]; then
-          echo "Installing Claude Code..."
-          npm install -g @anthropic-ai/claude-code
-          cp $(which claude) ~/.cache/claude-code/claude
-        else
-          echo "Using cached Claude Code"
-          sudo ln -sf ~/.cache/claude-code/claude /usr/local/bin/claude
-        fi
-
-    - name: golangci-lint
-      uses: golangci/golangci-lint-action@v8
-      with:
-        version: v2.7.2
-
-    - name: Run CI pipeline
-      run: make test
+  publish-dev-charts:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: agentapi-proxy
+            path: backend/helm/agentapi-proxy
+            base-version: 0.3.0
+            dependencies: true
+            component: backend
+            image: ccplant/ccplant-backend
+            build_image: true
+          - name: agentapi-ui
+            path: frontend/helm/agentapi-ui
+            base-version: 0.1.0
+            dependencies: false
+            component: frontend
+            image: ccplant/ccplant-frontend
+            build_image: true
+          - name: session-manager
+            path: chart/session-manager
+            base-version: 0.1.0
+            dependencies: false
+            component: backend
+            image: ccplant/ccplant-backend
+            build_image: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push development image
+        if: matrix.build_image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          push: true
+          tags: ghcr.io/${{ matrix.image }}:dev.ccplant.${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha,scope=dev-${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=dev-${{ matrix.component }}
+      - name: Build and push development API image
+        if: matrix.build_image && matrix.component == 'backend'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          push: true
+          tags: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha,scope=dev-api
+          cache-to: type=gha,mode=max,scope=dev-api
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - name: Build dependencies
+        if: matrix.dependencies
+        run: helm dependency build "${{ matrix.path }}"
+      - name: Package development chart
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          short_sha="${HEAD_SHA:0:7}"
+          helm package "${{ matrix.path }}" \
+            --version "${{ matrix.base-version }}-dev.ccplant.${short_sha}" \
+            --app-version "dev.ccplant.${HEAD_SHA}" \
+            --destination dist
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GH_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+      - name: Push development chart
+        env:
+          CHART_NAME: ${{ matrix.name }}
+        run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts

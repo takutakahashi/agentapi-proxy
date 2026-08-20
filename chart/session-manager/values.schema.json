@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["replicaCount", "image", "parent", "runner", "internalApi", "session"],
+  "properties": {
+    "replicaCount": {"type": "integer", "minimum": 1},
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "parent": {
+      "type": "object",
+      "required": ["url", "publicUrl", "connectionTokenSecretRef", "hmacSecretRef"],
+      "properties": {
+        "url": {"type": "string", "minLength": 1},
+        "publicUrl": {"type": "string", "minLength": 1},
+        "connectionTokenSecretRef": {"$ref": "#/$defs/namedSecretRef"},
+        "hmacSecretRef": {"$ref": "#/$defs/namedSecretRef"}
+      }
+    },
+    "runner": {
+      "type": "object",
+      "required": ["managerId", "pool"],
+      "properties": {
+        "managerId": {"type": "string", "minLength": 1},
+        "pool": {"type": "string", "minLength": 1}
+      }
+    },
+    "internalApi": {
+      "type": "object",
+      "required": ["tokenSecretRef"],
+      "properties": {"tokenSecretRef": {"$ref": "#/$defs/namedSecretRef"}}
+    },
+    "session": {
+      "type": "object",
+      "required": ["provisioner"],
+      "properties": {
+        "provisioner": {
+          "type": "object",
+          "required": ["tokenSecretRef"],
+          "properties": {"tokenSecretRef": {"$ref": "#/$defs/namedSecretRef"}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "namedSecretRef": {
+      "type": "object",
+      "required": ["name", "key"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "key": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

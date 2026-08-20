@@ -1,0 +1,98 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/ccplant/ccplant-backend
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Stable in-cluster callback name used by already-running session Pods.
+compatibilityService:
+  enabled: true
+  name: control
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+parent:
+  # Replace these example values before installing.
+  url: https://parent.example.invalid
+  publicUrl: https://session-manager.example.invalid
+  connectionTokenSecretRef:
+    name: session-manager-parent
+    key: connection-token
+  hmacSecretRef:
+    name: session-manager-parent
+    key: hmac-secret
+
+runner:
+  # Pool-backed sessions are claimed by idle runners; allocation is never
+  # pre-assigned to this manager.
+  managerId: replace-with-registered-manager-id
+  pool: default
+
+internalApi:
+  tokenSecretRef:
+    name: session-manager-internal
+    key: token
+
+encryption:
+  keySecretRef:
+    name: ""
+    key: encryption-key
+
+kvStore:
+  backend: kubernetes
+  namespace: ""
+
+leaderElection:
+  leaseDuration: 15s
+  renewDeadline: 10s
+  retryPeriod: 2s
+
+session:
+  image: ""
+  serviceAccountName: agentapi-proxy-session
+  networkFilterImage: ghcr.io/ccplant/network-filter-agent:latest
+  imagePullPolicy: IfNotPresent
+  basePort: 9000
+  podStartTimeout: 120
+  podStopTimeout: 30
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "2", memory: 4Gi}
+  pvc:
+    enabled: false
+    storageClass: ""
+    storageSize: 10Gi
+  provisioner:
+    tokenSecretRef:
+      name: session-manager-provisioner
+      key: provisioner-token
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraEnv: []
+extraEnvFrom: []

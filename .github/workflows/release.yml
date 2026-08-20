@@ -3,30 +3,331 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ccplant/ccplant-backend
+  FRONTEND_IMAGE: ccplant/ccplant-frontend
 
 jobs:
-  goreleaser:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    needs: metadata
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+          go-version-file: backend/go.mod
+      - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
           args: release --clean
+          workdir: backend
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  native-app:
+    needs: [metadata, binaries]
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: native/src-tauri -> target
+      - run: bun install --frozen-lockfile
+        working-directory: native
+      - id: apple
+        name: Check Apple release credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          configured=0
+          missing=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              missing=$((missing + 1))
+            else
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [ "$configured" -eq 0 ]; then
+            echo "::warning::Apple credentials are not configured; publishing unsigned macOS bundles"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          elif [ "$missing" -ne 0 ]; then
+            echo "::error::Apple signing is partially configured. Set all six Apple release secrets or remove them all."
+            exit 1
+          else
+            echo "Apple credentials are configured; bundles will be signed and notarized"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set native app version
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: bun scripts/set-version.ts "$VERSION"
+        working-directory: native
+      - name: Build bundled agentapi-proxy
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bun scripts/build-sidecar.ts "$TARGET"
+        working-directory: native
+      - id: release
+        name: Find draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          for attempt in {1..12}; do
+            id=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' | head -n 1)
+            if [ -n "$id" ]; then
+              echo "id=${id}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Draft release is not visible yet (attempt ${attempt}/12); retrying..."
+            sleep 5
+          done
+          echo "::error::Draft release for ${TAG} was not found"
+          exit 1
+      - name: Build and upload unsigned native app
+        if: steps.apple.outputs.signed == 'false'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: native
+          releaseId: ${{ steps.release.outputs.id }}
+          args: --target ${{ matrix.target }} --bundles app,dmg
+      - name: Build and upload signed native app
+        if: steps.apple.outputs.signed == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: native
+          releaseId: ${{ steps.release.outputs.id }}
+          args: --target ${{ matrix.target }} --bundles app,dmg
+
+  images:
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - component: backend
+            image: ccplant/ccplant-backend
+            artifact: backend
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - component: backend
+            image: ccplant/ccplant-backend
+            artifact: backend
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+          - component: backend
+            image: ccplant/ccplant-api
+            artifact: api
+            target: api
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - component: backend
+            image: ccplant/ccplant-api
+            artifact: api
+            target: api
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+          - component: frontend
+            image: ccplant/ccplant-frontend
+            artifact: frontend
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - component: frontend
+            image: ccplant/ccplant-frontend
+            artifact: frontend
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.artifact }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.artifact }}-${{ matrix.arch }}
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.artifact }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image-manifests:
+    needs: [metadata, images]
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - component: backend
+            image: ccplant/ccplant-backend
+            artifact: backend
+          - component: backend
+            image: ccplant/ccplant-api
+            artifact: api
+          - component: frontend
+            image: ccplant/ccplant-frontend
+            artifact: frontend
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.artifact }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-architecture manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}" \
+            --tag "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+  charts:
+    needs: [metadata, image-manifests]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: agentapi-proxy
+            path: backend/helm/agentapi-proxy
+            dependencies: true
+          - name: agentapi-ui
+            path: frontend/helm/agentapi-ui
+            dependencies: false
+          - name: ccplant
+            path: chart/ccplant
+            dependencies: true
+          - name: session-manager
+            path: chart/session-manager
+            dependencies: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - name: Set release version
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          CHART_PATH: ${{ matrix.path }}
+          CHART_NAME: ${{ matrix.name }}
+        run: |
+          if [ "${CHART_NAME}" = "ccplant" ]; then
+            sed -i "s/^version:.*/version: ${VERSION}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${VERSION}\\\"/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" backend/helm/agentapi-proxy/Chart.yaml
+            sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" frontend/helm/agentapi-ui/Chart.yaml
+          else
+            sed -i "s/^version:.*/version: ${TAG}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
+          fi
+      - name: Build dependencies
+        if: matrix.dependencies
+        run: helm dependency build "${{ matrix.path }}"
+      - run: helm lint "${{ matrix.path }}" --strict
+      - run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GH_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+      - run: helm package "${{ matrix.path }}" --destination dist
+      - name: Push chart
+        env:
+          CHART_NAME: ${{ matrix.name }}
+        run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
+
+  release-complete:
+    needs: [binaries, images, charts, native-app]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false --latest

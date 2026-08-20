@@ -1,0 +1,1765 @@
+// Package config provides configuration management for agentapi-proxy using viper.
+//
+// Configuration can be loaded from:
+//   - JSON files (backward compatibility)
+//   - YAML files
+//   - Environment variables with AGENTAPI_ prefix
+//
+// Environment variable examples:
+//
+//	AGENTAPI_START_PORT=8080
+//	AGENTAPI_AUTH_ENABLED=true
+//	AGENTAPI_AUTH_STATIC_ENABLED=true
+//	AGENTAPI_AUTH_STATIC_HEADER_NAME=X-API-Key
+//	AGENTAPI_AUTH_STATIC_KEYS_FILE=/path/to/keys.json
+//	AGENTAPI_AUTH_GITHUB_ENABLED=true
+//	AGENTAPI_AUTH_GITHUB_BASE_URL=https://api.github.com
+//	AGENTAPI_AUTH_GITHUB_TOKEN_HEADER=Authorization
+//	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID=your_client_id
+//	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
+//	AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE=read:user read:org project
+//	AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE=user
+//	AGENTAPI_ENABLE_MULTIPLE_USERS=true
+//	AGENTAPI_WEBHOOK_BASE_URL=https://example.com
+//	AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST=github.enterprise.com
+//
+// Configuration file search paths:
+//   - Current directory
+//   - $HOME/.agentapi/
+//   - /etc/agentapi/
+//
+// Configuration file names: config.json, config.yaml, config.yml
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v2"
+)
+
+// AuthConfig represents authentication configuration
+type AuthConfig struct {
+	Static         *StaticAuthConfig         `json:"static,omitempty" mapstructure:"static"`
+	BootstrapAdmin *BootstrapAdminAuthConfig `json:"bootstrap_admin,omitempty" mapstructure:"bootstrap_admin"`
+	GitHub         *GitHubAuthConfig         `json:"github,omitempty" mapstructure:"github"`
+}
+
+// BootstrapAdminAuthConfig provides a break-glass administrator identity that
+// is available before any external authentication provider is configured.
+type BootstrapAdminAuthConfig struct {
+	Enabled  bool   `json:"enabled" mapstructure:"enabled"`
+	UserID   string `json:"user_id" mapstructure:"user_id"`
+	Username string `json:"username" mapstructure:"username"`
+	Token    string `json:"token" mapstructure:"token"`
+}
+
+// StaticAuthConfig represents static API key authentication
+type StaticAuthConfig struct {
+	Enabled    bool     `json:"enabled" mapstructure:"enabled"`
+	APIKeys    []APIKey `json:"api_keys" mapstructure:"api_keys"`
+	KeysFile   string   `json:"keys_file" mapstructure:"keys_file"`
+	HeaderName string   `json:"header_name" mapstructure:"header_name"`
+}
+
+// GitHubAuthConfig represents GitHub OAuth authentication
+type GitHubAuthConfig struct {
+	Enabled     bool               `json:"enabled" mapstructure:"enabled"`
+	BaseURL     string             `json:"base_url" mapstructure:"base_url"`
+	TokenHeader string             `json:"token_header" mapstructure:"token_header"`
+	UserMapping GitHubUserMapping  `json:"user_mapping" mapstructure:"user_mapping"`
+	OAuth       *GitHubOAuthConfig `json:"oauth,omitempty" mapstructure:"oauth"`
+}
+
+// GitHubOAuthConfig represents GitHub OAuth2 configuration
+type GitHubOAuthConfig struct {
+	ClientID     string `json:"client_id" mapstructure:"client_id"`
+	ClientSecret string `json:"client_secret" mapstructure:"client_secret"`
+	Scope        string `json:"scope" mapstructure:"scope"`
+	BaseURL      string `json:"base_url,omitempty" mapstructure:"base_url"`
+}
+
+// GitHubUserMapping represents user role mapping configuration
+type GitHubUserMapping struct {
+	DefaultRole           string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
+	DefaultPermissions    []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
+	AllowUsersWithoutTeam bool                    `json:"allow_users_without_team" mapstructure:"allow_users_without_team" yaml:"allow_users_without_team"`
+	TeamRoleMapping       map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
+}
+
+// TeamRoleRule represents a team-based role rule
+type TeamRoleRule struct {
+	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
+	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
+	EnvFile     string   `json:"env_file,omitempty" mapstructure:"env_file" yaml:"env_file"`
+}
+
+// RoleEnvFilesConfig represents role-based environment files configuration
+type RoleEnvFilesConfig struct {
+	// Enabled enables role-based environment file loading
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// Path is the directory path containing role-specific .env files
+	Path string `json:"path" mapstructure:"path"`
+	// LoadDefault loads default.env before role-specific env file
+	LoadDefault bool `json:"load_default" mapstructure:"load_default"`
+}
+
+// APIKey represents an API key configuration
+type APIKey struct {
+	Key         string   `json:"key" mapstructure:"key"`
+	UserID      string   `json:"user_id" mapstructure:"user_id"`
+	Role        string   `json:"role" mapstructure:"role"`
+	Permissions []string `json:"permissions" mapstructure:"permissions"`
+	CreatedAt   string   `json:"created_at" mapstructure:"created_at"`
+	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at"`
+}
+
+// Toleration represents a Kubernetes toleration for session pods
+type Toleration struct {
+	// Key is the taint key that the toleration applies to
+	Key string `json:"key" mapstructure:"key" yaml:"key"`
+	// Operator represents a key's relationship to the value (Equal or Exists)
+	Operator string `json:"operator" mapstructure:"operator" yaml:"operator"`
+	// Value is the taint value the toleration matches to
+	Value string `json:"value" mapstructure:"value" yaml:"value"`
+	// Effect indicates the taint effect to match (NoSchedule, PreferNoSchedule, NoExecute)
+	Effect string `json:"effect" mapstructure:"effect" yaml:"effect"`
+	// TolerationSeconds is the period of time the toleration tolerates the taint (for NoExecute)
+	TolerationSeconds *int64 `json:"toleration_seconds,omitempty" mapstructure:"toleration_seconds" yaml:"toleration_seconds"`
+}
+
+// ScheduleWorkerConfig represents schedule worker configuration
+type ScheduleWorkerConfig struct {
+	// Enabled enables the schedule worker
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to check for due schedules (e.g., "30s", "1m")
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// Namespace is the Kubernetes namespace for schedule resources
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions
+	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// SlackbotCleanupWorkerConfig represents Slackbot session cleanup worker configuration.
+// The worker deletes Slackbot sessions whose last message is older than SessionTTL.
+type SlackbotCleanupWorkerConfig struct {
+	// Enabled enables the Slackbot cleanup worker
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to scan for stale sessions (e.g., "1h", "30m")
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// SessionTTL is the duration after the last message before a session is deleted (e.g., "72h")
+	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
+	// SessionTTLCheckInterval is how often to scan for non-Slackbot sessions that have an
+	// explicit agentapi.proxy/session-ttl annotation. This can be much shorter than
+	// CheckInterval to support short-lived sessions. Default: "1m"
+	SessionTTLCheckInterval string `json:"session_ttl_check_interval" mapstructure:"session_ttl_check_interval"`
+	// DryRun disables actual deletion; stale sessions are only logged.
+	// Useful for verifying TTL settings before enabling real cleanup.
+	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
+	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions
+	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// StockInventoryWorkerConfig represents stock inventory worker configuration.
+// The worker ensures a target number of pre-warmed stock sessions are always available.
+// Note: Sandbox (network filter) and scia sidecar are now always enabled.
+type StockInventoryWorkerConfig struct {
+	// Enabled controls whether the worker runs. Default: false (opt-in).
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to check and replenish stock sessions. Default: "30s".
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// TargetCount is the desired number of stock sessions to maintain. Default: 2.
+	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
+	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
+	// Pools optionally configures multiple stock pools. When set, each pool is
+	// replenished independently; otherwise the legacy single-pool fields above
+	// are used.
+	Pools []StockInventoryPoolConfig `json:"pools" mapstructure:"pools"`
+	// Namespace overrides the Kubernetes namespace (falls back to KubernetesSession.Namespace).
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Leader election timings.
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// StockInventoryPoolConfig represents one stock inventory capability pool.
+// Note: Sandbox (network filter) and scia sidecar are now always enabled.
+// Only DockerEnabled remains configurable.
+type StockInventoryPoolConfig struct {
+	// Name is the logical session pool claimed directly by idle runners.
+	Name string `json:"name" mapstructure:"name"`
+	// TargetCount is the desired number of stock sessions for this capability pool.
+	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
+	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
+}
+
+// WebhookConfig represents webhook configuration
+type WebhookConfig struct {
+	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
+	// If not set, the URL will be auto-detected from incoming request headers
+	BaseURL string `json:"base_url" mapstructure:"base_url"`
+	// GitHubEnterpriseHost is the default GitHub Enterprise host for webhook matching
+	// When set, webhooks without explicit enterprise_url will match against this host
+	// Example: "github.enterprise.com" (hostname only, without https://)
+	GitHubEnterpriseHost string `json:"github_enterprise_host" mapstructure:"github_enterprise_host"`
+}
+
+// SciaConfig represents scia OAuth broker/proxy integration configuration.
+type SciaConfig struct {
+	// Enabled controls whether scia integration is exposed to clients and injected into sessions.
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// PublicBaseURL is the browser-reachable origin that serves /oauth and /_scia.
+	// When empty, UI clients can still use same-origin relative OAuth URLs.
+	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
+	// OAuthInternalURL is the proxy-reachable scia OAuth server origin used for metadata.
+	OAuthInternalURL string `json:"oauth_internal_url" mapstructure:"oauth_internal_url"`
+	// ProxyURL is the forward proxy URL used by session Pods for outbound Google API calls.
+	ProxyURL string `json:"proxy_url" mapstructure:"proxy_url"`
+	// Credential is the scia credential ID used for Google OAuth, e.g. "takutakahashi.google".
+	Credential string `json:"credential" mapstructure:"credential"`
+	// UserNamespace is the scia user namespace used by the authorization-url endpoint.
+	UserNamespace string `json:"user_namespace" mapstructure:"user_namespace"`
+	// NoProxy is appended to the session NO_PROXY value when ProxyURL is injected.
+	NoProxy string `json:"no_proxy" mapstructure:"no_proxy"`
+	// SessionSidecarEnabled runs scia as a sidecar in each session Pod.
+	SessionSidecarEnabled bool `json:"session_sidecar_enabled" mapstructure:"session_sidecar_enabled"`
+	// SessionSidecarImage is the scia image used by the session sidecar.
+	SessionSidecarImage string `json:"session_sidecar_image" mapstructure:"session_sidecar_image"`
+	// SessionSidecarConfigImage is the shell-capable image used to render scia sidecar config.
+	SessionSidecarConfigImage string `json:"session_sidecar_config_image" mapstructure:"session_sidecar_config_image"`
+	// SessionSidecarPort is the localhost HTTP proxy port exposed by the sidecar.
+	SessionSidecarPort int `json:"session_sidecar_port" mapstructure:"session_sidecar_port"`
+	// GoogleHosts is the list of hosts where the sidecar injects the Google access token.
+	GoogleHosts []string `json:"google_hosts" mapstructure:"google_hosts"`
+	// GooglePaths is the list of paths where the sidecar injects the Google access token.
+	GooglePaths []string `json:"google_paths" mapstructure:"google_paths"`
+	// TodoistCredential is the scia credential ID used for Todoist OAuth, e.g. "takutakahashi.todoist".
+	TodoistCredential string `json:"todoist_credential" mapstructure:"todoist_credential"`
+	// TodoistHosts is the list of hosts where the sidecar injects the Todoist access token.
+	TodoistHosts []string `json:"todoist_hosts" mapstructure:"todoist_hosts"`
+	// TodoistPaths is the list of paths where the sidecar injects the Todoist access token.
+	TodoistPaths []string `json:"todoist_paths" mapstructure:"todoist_paths"`
+}
+
+// KubernetesSessionConfig represents Kubernetes session manager configuration
+type KubernetesSessionConfig struct {
+	// Namespace is the Kubernetes namespace where session resources are created
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Image is the container image for session pods
+	Image string `json:"image" mapstructure:"image"`
+	// ImagePullPolicy is the image pull policy for session pods
+	ImagePullPolicy string `json:"image_pull_policy" mapstructure:"image_pull_policy"`
+	// ServiceAccount is the service account for session pods
+	ServiceAccount string `json:"service_account" mapstructure:"service_account"`
+	// BasePort is the port that agentapi listens on in session pods
+	BasePort int `json:"base_port" mapstructure:"base_port"`
+	// CPURequest is the CPU request for session pods
+	CPURequest string `json:"cpu_request" mapstructure:"cpu_request"`
+	// CPULimit is the CPU limit for session pods
+	CPULimit string `json:"cpu_limit" mapstructure:"cpu_limit"`
+	// MemoryRequest is the memory request for session pods
+	MemoryRequest string `json:"memory_request" mapstructure:"memory_request"`
+	// MemoryLimit is the memory limit for session pods
+	MemoryLimit string `json:"memory_limit" mapstructure:"memory_limit"`
+	// PVCEnabled enables PersistentVolumeClaim for session pods workdir
+	// When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
+	PVCEnabled *bool `json:"pvc_enabled,omitempty" mapstructure:"pvc_enabled"`
+	// PVCStorageClass is the storage class for session PVCs
+	PVCStorageClass string `json:"pvc_storage_class" mapstructure:"pvc_storage_class"`
+	// PVCStorageSize is the storage size for session PVCs
+	PVCStorageSize string `json:"pvc_storage_size" mapstructure:"pvc_storage_size"`
+	// PodStartTimeout is the timeout in seconds for pod startup
+	PodStartTimeout int `json:"pod_start_timeout" mapstructure:"pod_start_timeout"`
+	// PodStopTimeout is the timeout in seconds for pod termination
+	PodStopTimeout int `json:"pod_stop_timeout" mapstructure:"pod_stop_timeout"`
+	// ProvisionerToken authenticates session Pod calls to the internal
+	// provisioner API.
+	ProvisionerToken string `json:"provisioner_token" mapstructure:"provisioner_token"`
+	// ProvisionerProxyURL is the base URL session Pods use to reach this proxy.
+	ProvisionerProxyURL string `json:"provisioner_proxy_url" mapstructure:"provisioner_proxy_url"`
+	// GitHubSecretName is the name of the Kubernetes Secret containing GitHub authentication credentials
+	// This Secret is used by the clone-repo init container for repository cloning
+	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID
+	GitHubSecretName string `json:"github_secret_name" mapstructure:"github_secret_name"`
+	// GitHubConfigSecretName is the name of the Kubernetes Secret containing GitHub configuration (non-auth)
+	// This Secret contains GITHUB_API and GITHUB_URL for GitHub Enterprise Server support
+	// It is kept separate from GitHubSecretName so that params.github_token can override authentication
+	// without losing Enterprise Server URL settings
+	GitHubConfigSecretName string `json:"github_config_secret_name" mapstructure:"github_config_secret_name"`
+	// ConfigFile is the path to an external configuration file for kubernetes session settings
+	// This file can contain node_selector and tolerations settings
+	ConfigFile string `json:"config_file,omitempty" mapstructure:"config_file"`
+	// SessionPodTemplateFile is the path to a PodTemplateSpec YAML file merged into every session Pod.
+	SessionPodTemplateFile string `json:"session_pod_template_file,omitempty" mapstructure:"session_pod_template_file"`
+	// NodeSelector is a selector which must be true for the pod to fit on a node
+	// Example: {"disktype": "ssd", "kubernetes.io/arch": "amd64"}
+	NodeSelector map[string]string `json:"node_selector,omitempty" mapstructure:"node_selector" yaml:"node_selector"`
+	// Affinity configures Kubernetes affinity rules for session pods.
+	Affinity map[string]interface{} `json:"affinity,omitempty" mapstructure:"affinity" yaml:"affinity"`
+	// Tolerations are tolerations for session pods to schedule onto nodes with matching taints
+	Tolerations []Toleration `json:"tolerations,omitempty" mapstructure:"tolerations" yaml:"tolerations"`
+
+	// SettingsBaseSecret is the single base Kubernetes Secret shared by all sessions.
+	// It contains settings.json in the agentapi settings format (env_vars, auth_mode, bedrock,
+	// mcp_servers, marketplaces, enabled_plugins, hooks) and is merged at the lowest priority
+	// level during session settings generation. Team and user settings can override it.
+	SettingsBaseSecret string `json:"settings_base_secret" mapstructure:"settings_base_secret"`
+
+	// OpenTelemetry Collector configuration
+	// OtelCollectorEnabled enables OpenTelemetry Collector sidecar for metrics collection
+	OtelCollectorEnabled bool `json:"otel_collector_enabled" mapstructure:"otel_collector_enabled"`
+	// OtelCollectorScrapeInterval is the scrape interval for Claude Code metrics
+	OtelCollectorScrapeInterval string `json:"otel_collector_scrape_interval" mapstructure:"otel_collector_scrape_interval"`
+	// OtelCollectorClaudeCodePort is the port where Claude Code exposes metrics
+	OtelCollectorClaudeCodePort int `json:"otel_collector_claude_code_port" mapstructure:"otel_collector_claude_code_port"`
+	// OtelCollectorExporterPort is the port where otelcol exposes labeled metrics
+	OtelCollectorExporterPort int `json:"otel_collector_exporter_port" mapstructure:"otel_collector_exporter_port"`
+
+	// Slack Integration configuration
+	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
+	// Used by agent-provisioner to pass the token to the claude-posts subprocess
+	SlackBotTokenSecretName string `json:"slack_bot_token_secret_name" mapstructure:"slack_bot_token_secret_name"`
+	// SlackBotTokenSecretKey is the key within the Secret that holds the Slack bot token
+	// Defaults to "bot-token"
+	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
+
+	// NetworkFilterImage is the container image for the iptables rule generation init
+	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.3.
+	// The init container reads the generated policy config and runs "nfa setup-iptables --output";
+	// the sidecar runs "nfa proxy --deferred-policy".
+	NetworkFilterImage string `json:"network_filter_image" mapstructure:"network_filter_image"`
+
+	// Network filter sidecar resource configuration
+	NetworkFilterCPURequest    string `json:"network_filter_cpu_request" mapstructure:"network_filter_cpu_request"`
+	NetworkFilterCPULimit      string `json:"network_filter_cpu_limit" mapstructure:"network_filter_cpu_limit"`
+	NetworkFilterMemoryRequest string `json:"network_filter_memory_request" mapstructure:"network_filter_memory_request"`
+	NetworkFilterMemoryLimit   string `json:"network_filter_memory_limit" mapstructure:"network_filter_memory_limit"`
+
+	// Network filter init container resource configuration
+	NetworkFilterInitCPURequest    string `json:"network_filter_init_cpu_request" mapstructure:"network_filter_init_cpu_request"`
+	NetworkFilterInitCPULimit      string `json:"network_filter_init_cpu_limit" mapstructure:"network_filter_init_cpu_limit"`
+	NetworkFilterInitMemoryRequest string `json:"network_filter_init_memory_request" mapstructure:"network_filter_init_memory_request"`
+	NetworkFilterInitMemoryLimit   string `json:"network_filter_init_memory_limit" mapstructure:"network_filter_init_memory_limit"`
+
+	// DinD (Docker in Docker) sidecar configuration.
+	// Sessions with docker.enabled=true in their params get a privileged DinD sidecar
+	// and DOCKER_HOST set so the main container can run docker commands.
+
+	// DinDImage is the container image for the DinD sidecar.
+	// Defaults to "docker:dind" if not specified.
+	DinDImage string `json:"dind_image" mapstructure:"dind_image"`
+
+	// DinD sidecar resource configuration
+	DinDCPURequest    string `json:"dind_cpu_request" mapstructure:"dind_cpu_request"`
+	DinDCPULimit      string `json:"dind_cpu_limit" mapstructure:"dind_cpu_limit"`
+	DinDMemoryRequest string `json:"dind_memory_request" mapstructure:"dind_memory_request"`
+	DinDMemoryLimit   string `json:"dind_memory_limit" mapstructure:"dind_memory_limit"`
+}
+
+// MemoryConfig represents memory backend configuration
+type MemoryConfig struct {
+	// Backend is the storage backend type: "kubernetes" (default), "s3", or "external"
+	Backend  string                `json:"backend" mapstructure:"backend"`
+	S3       *MemoryS3Config       `json:"s3,omitempty" mapstructure:"s3"`
+	External *MemoryExternalConfig `json:"external,omitempty" mapstructure:"external"`
+}
+
+// MemoryExternalConfig represents configuration for the external memory-server backend.
+// The external backend delegates all memory storage to a takutakahashi/memory-server instance.
+type MemoryExternalConfig struct {
+	// URL is the base URL of the memory-server (e.g., "http://memory-server:8080")
+	URL string `json:"url" mapstructure:"url"`
+	// AdminToken is used as ADMIN_TOKEN to create users in memory-server on demand.
+	// Typically populated from the AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN environment variable.
+	AdminToken string `json:"admin_token" mapstructure:"admin_token"`
+}
+
+// MemoryS3Config represents S3 backend configuration for memory storage
+type MemoryS3Config struct {
+	// Bucket is the S3 bucket name (required)
+	Bucket string `json:"bucket" mapstructure:"bucket"`
+	// Region is the AWS region (optional, uses AWS default config if empty)
+	Region string `json:"region" mapstructure:"region"`
+	// Prefix is the key prefix for all memory objects (default: "agentapi-memory/")
+	Prefix string `json:"prefix" mapstructure:"prefix"`
+	// Endpoint is a custom S3-compatible endpoint URL (e.g., for rustfs or other S3-compatible services)
+	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
+}
+
+// SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
+// to Path; "s3" uses any S3-compatible service (including Garage).
+type SessionPersistenceConfig struct {
+	Backend      string          `json:"backend" mapstructure:"backend"`
+	Path         string          `json:"path" mapstructure:"path"`
+	SuspendAfter string          `json:"suspend_after" mapstructure:"suspend_after"`
+	S3           *MemoryS3Config `json:"s3,omitempty" mapstructure:"s3"`
+}
+
+// AssetConfig represents static asset upload configuration.
+type AssetConfig struct {
+	// Backend is the storage backend type: "nginx" (default) or "s3".
+	Backend string `json:"backend" mapstructure:"backend"`
+	// PublicBaseURL is the externally reachable base URL used to build asset URLs.
+	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
+	// StoragePath is the local directory shared with nginx when Backend is "nginx".
+	StoragePath string         `json:"storage_path" mapstructure:"storage_path"`
+	S3          *AssetS3Config `json:"s3,omitempty" mapstructure:"s3"`
+}
+
+// AssetS3Config represents S3 backend configuration for static assets.
+type AssetS3Config struct {
+	Bucket   string `json:"bucket" mapstructure:"bucket"`
+	Region   string `json:"region" mapstructure:"region"`
+	Prefix   string `json:"prefix" mapstructure:"prefix"`
+	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
+}
+
+// SessionManagerConfig holds configuration for the session manager forwarding endpoint.
+// When enabled, External Session Manager (small-cluster mode) accepts pre-built SessionSettings from a
+// trusted upstream proxy (親プロキシ) and creates sessions without requiring local secrets.
+type SessionManagerConfig struct {
+	// Enabled enables the /api/v1/sessions forwarding endpoint.
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// HMACSecret is the shared HMAC-SHA256 secret used to verify request signatures.
+	// Every inbound request must carry X-Hub-Signature-256: sha256=<hex> computed
+	// over the raw request body with this secret.
+	// Can also be set via SESSION_MANAGER_HMAC_SECRET environment variable.
+	HMACSecret string `json:"hmac_secret" mapstructure:"hmac_secret"`
+	// UpstreamURL is the 親プロキシ URL to poll for external session allocations.
+	// Can also be set via SESSION_MANAGER_UPSTREAM_URL.
+	UpstreamURL string `json:"upstream_url" mapstructure:"upstream_url"`
+	// ConnectionToken authenticates this manager to 親プロキシ's allocator endpoint.
+	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
+	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
+	// ID identifies this manager in the cluster-wide registry.
+	ID string `json:"id" mapstructure:"id"`
+	// RunnerPool enables GitHub Actions-style runner claim mode for stock pods.
+	RunnerPool string `json:"runner_pool" mapstructure:"runner_pool"`
+	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
+	// to this manager when the outbound control lease is unavailable.
+	PublicURL string `json:"public_url" mapstructure:"public_url"`
+	// APIURL is the private peer API URL. The public API process uses it to call
+	// the isolated session manager, while an external session-manager process
+	// uses it as the local target for outbound control-tunnel requests.
+	// It is intentionally distinct from UpstreamURL, which identifies the parent
+	// control plane.
+	APIURL string `json:"api_url" mapstructure:"api_url"`
+	// APIToken authenticates outbound API -> session-manager requests.
+	APIToken string `json:"api_token" mapstructure:"api_token"`
+	// InternalAPIToken authenticates inbound requests to the private manager API.
+	InternalAPIToken string                         `json:"internal_api_token" mapstructure:"internal_api_token"`
+	Allocation       SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+}
+
+type SessionManagerAllocationConfig struct {
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// WorkerConfig contains the only control-plane dependency of the worker.
+// Worker persistence and leader election use KVStore and Redis respectively.
+type WorkerConfig struct {
+	ControlAPIURL   string `json:"control_api_url" mapstructure:"control_api_url"`
+	ControlAPIToken string `json:"control_api_token" mapstructure:"control_api_token"`
+}
+
+// RedisConfig holds configuration for the optional Redis backend used for
+// cross-pod session status synchronisation.
+type RedisConfig struct {
+	// Addr is the Redis server address in "host:port" format (e.g. "redis:6379").
+	// When empty, a no-op in-memory fallback is used and no real connection is made.
+	Addr string `json:"addr" mapstructure:"addr"`
+	// Password is the Redis AUTH password (optional).
+	Password string `json:"password" mapstructure:"password"`
+	// DB is the Redis database index to use (default: 0).
+	DB int `json:"db" mapstructure:"db"`
+	// TLSEnabled enables TLS for the Redis connection.
+	TLSEnabled bool `json:"tls_enabled" mapstructure:"tls_enabled"`
+	// DialTimeout is the timeout for establishing a connection (e.g. "5s").
+	DialTimeout string `json:"dial_timeout" mapstructure:"dial_timeout"`
+	// ReadTimeout is the timeout for socket reads (e.g. "3s").
+	ReadTimeout string `json:"read_timeout" mapstructure:"read_timeout"`
+	// WriteTimeout is the timeout for socket writes (e.g. "3s").
+	WriteTimeout string `json:"write_timeout" mapstructure:"write_timeout"`
+}
+
+// KVStoreConfig configures persistence for application data represented as
+// Kubernetes Secrets and ConfigMaps by the repository layer.
+type KVStoreBackendConfig struct {
+	Backend     string `json:"backend" mapstructure:"backend"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+}
+
+type KVStoreReplicationConfig struct {
+	Mode string `json:"mode" mapstructure:"mode"`
+}
+
+type KVStoreConfig struct {
+	// Legacy single-backend fields. They remain supported as primary-only configuration.
+	Namespace   string                   `json:"namespace" mapstructure:"namespace"`
+	Backend     string                   `json:"backend" mapstructure:"backend"`
+	DatabaseURL string                   `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string                   `json:"auth_token" mapstructure:"auth_token"`
+	Primary     *KVStoreBackendConfig    `json:"primary" mapstructure:"primary"`
+	Secondary   *KVStoreBackendConfig    `json:"secondary" mapstructure:"secondary"`
+	Replication KVStoreReplicationConfig `json:"replication" mapstructure:"replication"`
+}
+
+// UsageConfig configures the dedicated libSQL database used for usage events.
+// It is intentionally independent from KVStoreConfig.
+type UsageConfig struct {
+	Enabled     bool   `json:"enabled" mapstructure:"enabled"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+}
+
+// Config represents the proxy configuration
+type Config struct {
+	// BinaryPath is the ccplant executable used by generated hooks and child processes.
+	BinaryPath string `json:"binary_path" mapstructure:"binary_path"`
+	// Auth represents authentication configuration
+	Auth AuthConfig `json:"auth" mapstructure:"auth"`
+	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
+	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
+	// RoleEnvFiles is the configuration for role-based environment files
+	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
+	// KubernetesSession is the configuration for Kubernetes-based session management
+	KubernetesSession KubernetesSessionConfig `json:"kubernetes_session" mapstructure:"kubernetes_session"`
+	// ScheduleWorker is the configuration for the schedule worker
+	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
+	// SlackbotCleanupWorker is the configuration for the Slackbot session cleanup worker
+	SlackbotCleanupWorker SlackbotCleanupWorkerConfig `json:"slackbot_cleanup_worker" mapstructure:"slackbot_cleanup_worker"`
+	// StockInventoryWorker is the configuration for the stock session inventory worker.
+	StockInventoryWorker StockInventoryWorkerConfig `json:"stock_inventory_worker" mapstructure:"stock_inventory_worker"`
+	// Webhook is the configuration for webhook functionality
+	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
+	// Scia is the configuration for scia OAuth token broker/proxy integration.
+	Scia SciaConfig `json:"scia" mapstructure:"scia"`
+	// Memory is the configuration for memory storage backend
+	Memory             MemoryConfig             `json:"memory" mapstructure:"memory"`
+	SessionPersistence SessionPersistenceConfig `json:"session_persistence" mapstructure:"session_persistence"`
+	// Asset is the configuration for static asset upload and serving.
+	Asset AssetConfig `json:"asset" mapstructure:"asset"`
+	// Slack is the configuration for Slack bot inbound webhook functionality
+	Slack SlackConfig `json:"slack" mapstructure:"slack"`
+	// SessionManager is the configuration for the session manager forwarding endpoint.
+	SessionManager SessionManagerConfig `json:"session_manager" mapstructure:"session_manager"`
+	// Worker is deliberately separate from KubernetesSession. A worker has no
+	// Kubernetes workload credentials and talks to the API over this endpoint.
+	Worker WorkerConfig `json:"worker" mapstructure:"worker"`
+	// Redis holds optional Redis configuration for cross-pod status synchronisation.
+	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
+	Redis RedisConfig `json:"redis" mapstructure:"redis"`
+	// KVStore controls storage for application KV data currently backed by
+	// Kubernetes Secrets and ConfigMaps.
+	KVStore KVStoreConfig `json:"kv_store" mapstructure:"kv_store"`
+	// Usage controls response-level token usage collection.
+	Usage UsageConfig `json:"usage" mapstructure:"usage"`
+}
+
+// SlackConfig represents Slack bot (Socket Mode) configuration
+type SlackConfig struct {
+	// AppToken and BotToken are write-only runtime inputs used by the dedicated
+	// worker to materialize its default Socket Mode credential in the KV store.
+	AppToken string `json:"app_token" mapstructure:"app_token"`
+	BotToken string `json:"bot_token" mapstructure:"bot_token"`
+	// AppTokenSecretName is the K8s Secret name containing the default App-level token (xapp-...).
+	// Used for the default Socket Mode connection.
+	// If empty, falls back to KubernetesSession.SlackBotTokenSecretName.
+	// Set via AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME environment variable.
+	AppTokenSecretName string `json:"app_token_secret_name" mapstructure:"app_token_secret_name"`
+	// AppTokenSecretKey is the key within the Secret for the App-level token.
+	// Defaults to "app-token".
+	// Set via AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY environment variable.
+	AppTokenSecretKey string `json:"app_token_secret_key" mapstructure:"app_token_secret_key"`
+	// DryRun enables dry-run mode: session creation and Slack posts are logged but not executed.
+	// Useful for testing event routing without side effects.
+	// Set via AGENTAPI_SLACK_DRY_RUN environment variable.
+	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
+}
+
+// LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
+func LoadConfig(filename string) (*Config, error) {
+	v := viper.New()
+
+	// Set up configuration file
+	if filename != "" {
+		v.SetConfigFile(filename)
+	} else {
+		v.SetConfigName("config")
+		v.AddConfigPath(".")
+		v.AddConfigPath("$HOME/.agentapi")
+		v.AddConfigPath("/etc/agentapi/")
+	}
+
+	// Enable environment variable support
+	v.AutomaticEnv()
+	v.SetEnvPrefix("AGENTAPI")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Explicitly bind environment variables for nested configuration
+	bindEnvVars(v)
+
+	// Set defaults
+	setDefaults(v)
+
+	// Read config file
+	if err := v.ReadInConfig(); err != nil {
+		// If no config file is found, use defaults
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, err
+		}
+		log.Printf("[CONFIG] No config file found, using defaults and environment variables")
+	} else {
+		log.Printf("[CONFIG] Using config file: %s", v.ConfigFileUsed())
+	}
+
+	var config Config
+	if err := v.Unmarshal(&config, viper.DecodeHook(stockInventoryPoolsDecodeHook())); err != nil {
+		return nil, err
+	}
+
+	// Apply defaults for any fields that weren't set in config file
+	applyConfigDefaults(&config)
+
+	// Initialize config structs from environment variables if they don't exist
+	initializeConfigStructsFromEnv(&config, v)
+
+	// Load external auth configuration if specified
+	if config.AuthConfigFile != "" {
+		if err := loadAuthConfigFromFile(&config, config.AuthConfigFile); err != nil {
+			log.Printf("[CONFIG] Warning: Failed to load auth config from %s: %v", config.AuthConfigFile, err)
+		} else {
+			log.Printf("[CONFIG] Loaded auth config from: %s", config.AuthConfigFile)
+		}
+	}
+
+	// Apply post-processing
+	if err := postProcessConfig(&config); err != nil {
+		return nil, err
+	}
+
+	// Debug: Log configuration summary
+	log.Printf("[CONFIG] Static auth enabled: %v", config.Auth.Static != nil && config.Auth.Static.Enabled)
+	log.Printf("[CONFIG] GitHub auth enabled: %v", config.Auth.GitHub != nil && config.Auth.GitHub.Enabled)
+	if config.Auth.GitHub != nil {
+		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
+	}
+	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
+
+	return &config, nil
+}
+
+func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String || to != reflect.TypeOf([]StockInventoryPoolConfig{}) {
+			return data, nil
+		}
+		if data == "" {
+			return []StockInventoryPoolConfig{}, nil
+		}
+		pools, err := parseStockInventoryPoolsJSON(data.(string))
+		if err != nil {
+			return nil, err
+		}
+		return pools, nil
+	}
+}
+
+func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig, error) {
+	var rawPools []map[string]interface{}
+	if err := json.Unmarshal([]byte(poolsJSON), &rawPools); err != nil {
+		return nil, err
+	}
+
+	pools := make([]StockInventoryPoolConfig, 0, len(rawPools))
+	for _, rawPool := range rawPools {
+		name, _ := rawPool["name"].(string)
+		targetCount, err := jsonInt(rawPool, "target_count", "targetCount")
+		if err != nil {
+			return nil, err
+		}
+		dockerEnabled, err := jsonBool(rawPool, "docker_enabled", "dockerEnabled")
+		if err != nil {
+			return nil, err
+		}
+
+		pools = append(pools, StockInventoryPoolConfig{
+			Name:          name,
+			TargetCount:   targetCount,
+			DockerEnabled: dockerEnabled,
+		})
+	}
+	return pools, nil
+}
+
+func jsonInt(values map[string]interface{}, keys ...string) (int, error) {
+	value, ok := jsonValue(values, keys...)
+	if !ok {
+		return 0, nil
+	}
+	switch typedValue := value.(type) {
+	case float64:
+		return int(typedValue), nil
+	case string:
+		return strconv.Atoi(typedValue)
+	default:
+		return 0, fmt.Errorf("expected integer for %s, got %T", keys[0], value)
+	}
+}
+
+func jsonBool(values map[string]interface{}, keys ...string) (bool, error) {
+	value, ok := jsonValue(values, keys...)
+	if !ok {
+		return false, nil
+	}
+	switch typedValue := value.(type) {
+	case bool:
+		return typedValue, nil
+	case string:
+		return strconv.ParseBool(typedValue)
+	default:
+		return false, fmt.Errorf("expected boolean for %s, got %T", keys[0], value)
+	}
+}
+
+func jsonValue(values map[string]interface{}, keys ...string) (interface{}, bool) {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func commaSeparatedList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+// initializeConfigStructsFromEnv initializes config structs from environment variables
+func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
+	config.SessionPersistence.Backend = v.GetString("session_persistence.backend")
+	config.SessionPersistence.Path = v.GetString("session_persistence.path")
+	config.SessionPersistence.SuspendAfter = v.GetString("session_persistence.suspend_after")
+	if bucket := v.GetString("session_persistence.s3.bucket"); bucket != "" {
+		config.SessionPersistence.S3 = &MemoryS3Config{
+			Bucket: bucket, Region: v.GetString("session_persistence.s3.region"),
+			Prefix: v.GetString("session_persistence.s3.prefix"), Endpoint: v.GetString("session_persistence.s3.endpoint"),
+		}
+	}
+	// Initialize Auth.Static if environment variables are set
+	if config.Auth.Static == nil && (v.GetBool("auth.static.enabled") || v.GetString("auth.static.header_name") != "" || v.GetString("auth.static.keys_file") != "") {
+		config.Auth.Static = &StaticAuthConfig{
+			Enabled:    v.GetBool("auth.static.enabled"),
+			HeaderName: v.GetString("auth.static.header_name"),
+			KeysFile:   v.GetString("auth.static.keys_file"),
+			APIKeys:    []APIKey{},
+		}
+		log.Printf("[CONFIG] Initialized Static auth config from environment variables")
+	}
+	if config.Auth.BootstrapAdmin == nil && (v.GetBool("auth.bootstrap_admin.enabled") || v.GetString("auth.bootstrap_admin.token") != "") {
+		config.Auth.BootstrapAdmin = &BootstrapAdminAuthConfig{
+			Enabled:  v.GetBool("auth.bootstrap_admin.enabled"),
+			UserID:   v.GetString("auth.bootstrap_admin.user_id"),
+			Username: v.GetString("auth.bootstrap_admin.username"),
+			Token:    v.GetString("auth.bootstrap_admin.token"),
+		}
+	}
+
+	// Initialize Auth.GitHub if environment variables are set
+	if config.Auth.GitHub == nil && (v.GetBool("auth.github.enabled") || v.GetString("auth.github.base_url") != "" || v.GetString("auth.github.token_header") != "") {
+		config.Auth.GitHub = &GitHubAuthConfig{
+			Enabled:     v.GetBool("auth.github.enabled"),
+			BaseURL:     v.GetString("auth.github.base_url"),
+			TokenHeader: v.GetString("auth.github.token_header"),
+			UserMapping: GitHubUserMapping{
+				DefaultRole:           v.GetString("auth.github.user_mapping.default_role"),
+				DefaultPermissions:    v.GetStringSlice("auth.github.user_mapping.default_permissions"),
+				AllowUsersWithoutTeam: v.GetBool("auth.github.user_mapping.allow_users_without_team"),
+			},
+		}
+		log.Printf("[CONFIG] Initialized GitHub auth config from environment variables")
+	}
+
+	// Initialize Auth.GitHub.OAuth if environment variables are set
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth == nil {
+		// Check if OAuth environment variables are set
+		clientID := v.GetString("auth.github.oauth.client_id")
+		clientSecret := v.GetString("auth.github.oauth.client_secret")
+
+		if clientID != "" || clientSecret != "" {
+			config.Auth.GitHub.OAuth = &GitHubOAuthConfig{
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
+				Scope:        v.GetString("auth.github.oauth.scope"),
+				BaseURL:      v.GetString("auth.github.oauth.base_url"),
+			}
+			log.Printf("[CONFIG] Initialized GitHub OAuth config from environment variables")
+			log.Printf("[CONFIG] OAuth ClientID from env: %v", clientID != "")
+			log.Printf("[CONFIG] OAuth ClientSecret from env: %v", clientSecret != "")
+		}
+	}
+
+	if namespace := os.Getenv("AGENTAPI_K8S_SESSION_NAMESPACE"); namespace != "" {
+		config.KubernetesSession.Namespace = namespace
+	}
+	if namespace := os.Getenv("AGENTAPI_SCHEDULE_WORKER_NAMESPACE"); namespace != "" {
+		config.ScheduleWorker.Namespace = namespace
+	}
+	if namespace := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE"); namespace != "" {
+		config.StockInventoryWorker.Namespace = namespace
+	}
+	if enabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED"); enabled != "" {
+		if parsed, err := strconv.ParseBool(enabled); err == nil {
+			config.StockInventoryWorker.Enabled = parsed
+		}
+	}
+	if checkInterval := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL"); checkInterval != "" {
+		config.StockInventoryWorker.CheckInterval = checkInterval
+	}
+	if targetCount := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT"); targetCount != "" {
+		if parsed, err := strconv.Atoi(targetCount); err == nil {
+			config.StockInventoryWorker.TargetCount = parsed
+		}
+	}
+	if dockerEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED"); dockerEnabled != "" {
+		if parsed, err := strconv.ParseBool(dockerEnabled); err == nil {
+			config.StockInventoryWorker.DockerEnabled = parsed
+		}
+	}
+	if leaseDuration := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION"); leaseDuration != "" {
+		config.StockInventoryWorker.LeaseDuration = leaseDuration
+	}
+	if renewDeadline := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE"); renewDeadline != "" {
+		config.StockInventoryWorker.RenewDeadline = renewDeadline
+	}
+	if retryPeriod := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD"); retryPeriod != "" {
+		config.StockInventoryWorker.RetryPeriod = retryPeriod
+	}
+	if poolsJSON := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS"); poolsJSON != "" {
+		pools, err := parseStockInventoryPoolsJSON(poolsJSON)
+		if err != nil {
+			log.Printf("[CONFIG] Warning: Failed to parse stock inventory worker pools JSON: %v", err)
+		} else {
+			config.StockInventoryWorker.Pools = pools
+		}
+	}
+
+	if backend := os.Getenv("AGENTAPI_ASSET_BACKEND"); backend != "" {
+		config.Asset.Backend = backend
+	}
+	if publicBaseURL := os.Getenv("AGENTAPI_ASSET_PUBLIC_BASE_URL"); publicBaseURL != "" {
+		config.Asset.PublicBaseURL = publicBaseURL
+	}
+	if storagePath := os.Getenv("AGENTAPI_ASSET_STORAGE_PATH"); storagePath != "" {
+		config.Asset.StoragePath = storagePath
+	}
+	if bucket := os.Getenv("AGENTAPI_ASSET_S3_BUCKET"); bucket != "" {
+		if config.Asset.S3 == nil {
+			config.Asset.S3 = &AssetS3Config{}
+		}
+		config.Asset.S3.Bucket = bucket
+	}
+	if region := os.Getenv("AGENTAPI_ASSET_S3_REGION"); region != "" {
+		if config.Asset.S3 == nil {
+			config.Asset.S3 = &AssetS3Config{}
+		}
+		config.Asset.S3.Region = region
+	}
+	if prefix := os.Getenv("AGENTAPI_ASSET_S3_PREFIX"); prefix != "" {
+		if config.Asset.S3 == nil {
+			config.Asset.S3 = &AssetS3Config{}
+		}
+		config.Asset.S3.Prefix = prefix
+	}
+	if endpoint := os.Getenv("AGENTAPI_ASSET_S3_ENDPOINT"); endpoint != "" {
+		if config.Asset.S3 == nil {
+			config.Asset.S3 = &AssetS3Config{}
+		}
+		config.Asset.S3.Endpoint = endpoint
+	}
+
+	if enabled, ok := os.LookupEnv("AGENTAPI_SCIA_ENABLED"); ok {
+		config.Scia.Enabled = strings.EqualFold(enabled, "true")
+	}
+	if publicBaseURL := os.Getenv("AGENTAPI_SCIA_PUBLIC_BASE_URL"); publicBaseURL != "" {
+		config.Scia.PublicBaseURL = publicBaseURL
+	}
+	if proxyURL := os.Getenv("AGENTAPI_SCIA_PROXY_URL"); proxyURL != "" {
+		config.Scia.ProxyURL = proxyURL
+	}
+	if credential := os.Getenv("AGENTAPI_SCIA_CREDENTIAL"); credential != "" {
+		config.Scia.Credential = credential
+	}
+	if userNamespace := os.Getenv("AGENTAPI_SCIA_USER_NAMESPACE"); userNamespace != "" {
+		config.Scia.UserNamespace = userNamespace
+	}
+	if noProxy := os.Getenv("AGENTAPI_SCIA_NO_PROXY"); noProxy != "" {
+		config.Scia.NoProxy = noProxy
+	}
+	if enabled, ok := os.LookupEnv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED"); ok {
+		config.Scia.SessionSidecarEnabled = strings.EqualFold(enabled, "true")
+	}
+	if image := os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE"); image != "" {
+		config.Scia.SessionSidecarImage = image
+	}
+	if image := os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE"); image != "" {
+		config.Scia.SessionSidecarConfigImage = image
+	}
+	if port := os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_PORT"); port != "" {
+		if parsed, err := strconv.Atoi(port); err == nil {
+			config.Scia.SessionSidecarPort = parsed
+		}
+	}
+	if hosts := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_GOOGLE_HOSTS")); len(hosts) > 0 {
+		config.Scia.GoogleHosts = hosts
+	}
+	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_GOOGLE_PATHS")); len(paths) > 0 {
+		config.Scia.GooglePaths = paths
+	}
+	if credential := os.Getenv("AGENTAPI_SCIA_TODOIST_CREDENTIAL"); credential != "" {
+		config.Scia.TodoistCredential = credential
+	}
+	if hosts := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_TODOIST_HOSTS")); len(hosts) > 0 {
+		config.Scia.TodoistHosts = hosts
+	}
+	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_TODOIST_PATHS")); len(paths) > 0 {
+		config.Scia.TodoistPaths = paths
+	}
+
+	// Override fields if environment variables are set (even if structures already exist)
+	if config.Auth.Static != nil {
+		if v.IsSet("auth.static.keys_file") {
+			config.Auth.Static.KeysFile = v.GetString("auth.static.keys_file")
+		}
+	}
+
+	if config.Auth.GitHub != nil {
+		if v.IsSet("auth.github.user_mapping.default_role") {
+			config.Auth.GitHub.UserMapping.DefaultRole = v.GetString("auth.github.user_mapping.default_role")
+		}
+		if v.IsSet("auth.github.user_mapping.default_permissions") {
+			config.Auth.GitHub.UserMapping.DefaultPermissions = v.GetStringSlice("auth.github.user_mapping.default_permissions")
+		}
+		if v.IsSet("auth.github.user_mapping.allow_users_without_team") {
+			config.Auth.GitHub.UserMapping.AllowUsersWithoutTeam = v.GetBool("auth.github.user_mapping.allow_users_without_team")
+		}
+
+		// Override OAuth settings if already exists
+		if config.Auth.GitHub.OAuth != nil {
+			if clientID := v.GetString("auth.github.oauth.client_id"); clientID != "" {
+				config.Auth.GitHub.OAuth.ClientID = clientID
+			}
+			if clientSecret := v.GetString("auth.github.oauth.client_secret"); clientSecret != "" {
+				config.Auth.GitHub.OAuth.ClientSecret = clientSecret
+			}
+			if scope := v.GetString("auth.github.oauth.scope"); scope != "" {
+				config.Auth.GitHub.OAuth.Scope = scope
+			}
+			if baseURL := v.GetString("auth.github.oauth.base_url"); baseURL != "" {
+				config.Auth.GitHub.OAuth.BaseURL = baseURL
+			}
+		}
+	}
+
+}
+
+// bindEnvVars explicitly binds environment variables to configuration keys
+func bindEnvVars(v *viper.Viper) {
+	// Bind nested configuration keys to environment variables
+	// Note: BindEnv errors are generally not critical and can be ignored
+	// as they typically occur only when the key is already bound
+	_ = v.BindEnv("binary_path", "CCPLANT_BINARY_PATH")
+
+	// Auth configuration
+	_ = v.BindEnv("auth.static.enabled")
+	_ = v.BindEnv("auth.static.header_name")
+	_ = v.BindEnv("auth.static.keys_file")
+	_ = v.BindEnv("auth.bootstrap_admin.enabled")
+	_ = v.BindEnv("auth.bootstrap_admin.user_id")
+	_ = v.BindEnv("auth.bootstrap_admin.username")
+	_ = v.BindEnv("auth.bootstrap_admin.token")
+
+	// GitHub auth configuration
+	_ = v.BindEnv("auth.github.enabled")
+	_ = v.BindEnv("auth.github.base_url")
+	_ = v.BindEnv("auth.github.token_header")
+	_ = v.BindEnv("auth.github.user_mapping.default_role")
+	_ = v.BindEnv("auth.github.user_mapping.default_permissions")
+	_ = v.BindEnv("auth.github.user_mapping.allow_users_without_team")
+
+	// GitHub OAuth configuration
+	_ = v.BindEnv("auth.github.oauth.client_id")
+	_ = v.BindEnv("auth.github.oauth.client_secret")
+	_ = v.BindEnv("auth.github.oauth.scope")
+	_ = v.BindEnv("auth.github.oauth.base_url")
+
+	// Other configuration
+	_ = v.BindEnv("auth_config_file")
+	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
+	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
+	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
+	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
+	_ = v.BindEnv("kv_store.primary.database_url", "AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL")
+	_ = v.BindEnv("kv_store.primary.auth_token", "AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.secondary.backend", "AGENTAPI_KV_STORE_SECONDARY_BACKEND")
+	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
+	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
+	_ = v.BindEnv("usage.enabled", "AGENTAPI_USAGE_ENABLED")
+	_ = v.BindEnv("usage.database_url", "AGENTAPI_USAGE_DATABASE_URL")
+	_ = v.BindEnv("usage.auth_token", "AGENTAPI_USAGE_AUTH_TOKEN")
+
+	// scia OAuth broker/proxy configuration
+	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
+	_ = v.BindEnv("scia.public_base_url", "AGENTAPI_SCIA_PUBLIC_BASE_URL")
+	_ = v.BindEnv("scia.oauth_internal_url", "AGENTAPI_SCIA_OAUTH_INTERNAL_URL")
+	_ = v.BindEnv("scia.proxy_url", "AGENTAPI_SCIA_PROXY_URL")
+	_ = v.BindEnv("scia.credential", "AGENTAPI_SCIA_CREDENTIAL")
+	_ = v.BindEnv("scia.user_namespace", "AGENTAPI_SCIA_USER_NAMESPACE")
+	_ = v.BindEnv("scia.no_proxy", "AGENTAPI_SCIA_NO_PROXY")
+	_ = v.BindEnv("scia.session_sidecar_enabled", "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED")
+	_ = v.BindEnv("scia.session_sidecar_image", "AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE")
+	_ = v.BindEnv("scia.session_sidecar_config_image", "AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE")
+	_ = v.BindEnv("scia.session_sidecar_port", "AGENTAPI_SCIA_SESSION_SIDECAR_PORT")
+	_ = v.BindEnv("scia.google_hosts", "AGENTAPI_SCIA_GOOGLE_HOSTS")
+	_ = v.BindEnv("scia.google_paths", "AGENTAPI_SCIA_GOOGLE_PATHS")
+	_ = v.BindEnv("scia.todoist_credential", "AGENTAPI_SCIA_TODOIST_CREDENTIAL")
+	_ = v.BindEnv("scia.todoist_hosts", "AGENTAPI_SCIA_TODOIST_HOSTS")
+	_ = v.BindEnv("scia.todoist_paths", "AGENTAPI_SCIA_TODOIST_PATHS")
+
+	// Role-based environment files configuration
+	_ = v.BindEnv("role_env_files.enabled")
+	_ = v.BindEnv("role_env_files.path")
+	_ = v.BindEnv("role_env_files.load_default")
+
+	// Kubernetes session configuration
+	_ = v.BindEnv("kubernetes_session.namespace", "AGENTAPI_K8S_SESSION_NAMESPACE")
+	_ = v.BindEnv("kubernetes_session.image", "AGENTAPI_K8S_SESSION_IMAGE")
+	_ = v.BindEnv("kubernetes_session.image_pull_policy", "AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY")
+	_ = v.BindEnv("kubernetes_session.service_account", "AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT")
+	_ = v.BindEnv("kubernetes_session.base_port", "AGENTAPI_K8S_SESSION_BASE_PORT")
+	_ = v.BindEnv("kubernetes_session.cpu_request", "AGENTAPI_K8S_SESSION_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.cpu_limit", "AGENTAPI_K8S_SESSION_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.memory_request", "AGENTAPI_K8S_SESSION_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.memory_limit", "AGENTAPI_K8S_SESSION_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.pvc_enabled", "AGENTAPI_K8S_SESSION_PVC_ENABLED")
+	_ = v.BindEnv("kubernetes_session.pvc_storage_class", "AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS")
+	_ = v.BindEnv("kubernetes_session.pvc_storage_size", "AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE")
+	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
+	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
+	_ = v.BindEnv("kubernetes_session.provisioner_proxy_url", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
+	_ = v.BindEnv("kubernetes_session.provisioner_token", "AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN")
+	_ = v.BindEnv("kubernetes_session.network_filter_image", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE")
+	_ = v.BindEnv("kubernetes_session.network_filter_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.network_filter_memory_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_memory_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_memory_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_memory_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
+	_ = v.BindEnv("kubernetes_session.session_pod_template_file", "AGENTAPI_K8S_SESSION_POD_TEMPLATE_FILE")
+	// MCP servers configuration
+
+	// Settings base secret configuration
+	_ = v.BindEnv("kubernetes_session.settings_base_secret", "AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET")
+
+	// OpenTelemetry Collector configuration
+	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
+	_ = v.BindEnv("kubernetes_session.otel_collector_scrape_interval", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL")
+	_ = v.BindEnv("kubernetes_session.otel_collector_claude_code_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT")
+	_ = v.BindEnv("kubernetes_session.otel_collector_exporter_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT")
+
+	// Slack Integration configuration
+	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_name", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_key", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY")
+
+	// Schedule worker configuration
+	_ = v.BindEnv("schedule_worker.enabled", "AGENTAPI_SCHEDULE_WORKER_ENABLED")
+	_ = v.BindEnv("schedule_worker.check_interval", "AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("schedule_worker.namespace", "AGENTAPI_SCHEDULE_WORKER_NAMESPACE")
+	_ = v.BindEnv("schedule_worker.lease_duration", "AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("schedule_worker.renew_deadline", "AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("schedule_worker.retry_period", "AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD")
+
+	// Slackbot cleanup worker configuration
+	_ = v.BindEnv("slackbot_cleanup_worker.enabled", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED")
+	_ = v.BindEnv("slackbot_cleanup_worker.check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL")
+	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl_check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL")
+	_ = v.BindEnv("slackbot_cleanup_worker.dry_run", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN")
+	_ = v.BindEnv("slackbot_cleanup_worker.lease_duration", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
+
+	// Stock inventory worker configuration
+	_ = v.BindEnv("stock_inventory_worker.enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.check_interval", "AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
+	_ = v.BindEnv("stock_inventory_worker.docker_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.pools", "AGENTAPI_STOCK_INVENTORY_WORKER_POOLS")
+	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
+	_ = v.BindEnv("stock_inventory_worker.lease_duration", "AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("stock_inventory_worker.retry_period", "AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD")
+
+	// Webhook configuration
+	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
+	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
+
+	// Slack configuration
+	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
+	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
+	_ = v.BindEnv("slack.app_token", "AGENTAPI_SLACK_APP_TOKEN")
+	_ = v.BindEnv("slack.bot_token", "AGENTAPI_SLACK_BOT_TOKEN")
+	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
+
+	// Session manager configuration
+	_ = v.BindEnv("session_manager.enabled", "AGENTAPI_SESSION_MANAGER_ENABLED", "SESSION_MANAGER_ENABLED")
+	_ = v.BindEnv("session_manager.hmac_secret", "AGENTAPI_SESSION_MANAGER_HMAC_SECRET", "SESSION_MANAGER_HMAC_SECRET")
+	_ = v.BindEnv("session_manager.upstream_url", "AGENTAPI_SESSION_MANAGER_UPSTREAM_URL", "SESSION_MANAGER_UPSTREAM_URL")
+	_ = v.BindEnv("session_manager.connection_token", "AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.id", "AGENTAPI_SESSION_MANAGER_ID", "SESSION_MANAGER_ID")
+	_ = v.BindEnv("session_manager.runner_pool", "AGENTAPI_SESSION_MANAGER_RUNNER_POOL", "SESSION_MANAGER_RUNNER_POOL")
+	_ = v.BindEnv("session_manager.public_url", "AGENTAPI_SESSION_MANAGER_PUBLIC_URL", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
+	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
+	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
+	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
+	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
+	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")
+
+	// Background-worker control plane. These values are deliberately not part
+	// of kubernetes_session: the worker must never receive a provisioner token.
+	_ = v.BindEnv("worker.control_api_url", "AGENTAPI_WORKER_CONTROL_API_URL", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
+	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
+
+	// Memory backend configuration
+	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
+	_ = v.BindEnv("memory.s3.bucket", "AGENTAPI_MEMORY_S3_BUCKET")
+	_ = v.BindEnv("memory.s3.region", "AGENTAPI_MEMORY_S3_REGION")
+	_ = v.BindEnv("memory.s3.prefix", "AGENTAPI_MEMORY_S3_PREFIX")
+	_ = v.BindEnv("memory.s3.endpoint", "AGENTAPI_MEMORY_S3_ENDPOINT")
+	_ = v.BindEnv("session_persistence.backend", "AGENTAPI_SESSION_PERSISTENCE_BACKEND")
+	_ = v.BindEnv("session_persistence.path", "AGENTAPI_SESSION_PERSISTENCE_PATH")
+	_ = v.BindEnv("session_persistence.suspend_after", "AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER")
+	_ = v.BindEnv("session_persistence.s3.bucket", "AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET")
+	_ = v.BindEnv("session_persistence.s3.region", "AGENTAPI_SESSION_PERSISTENCE_S3_REGION")
+	_ = v.BindEnv("session_persistence.s3.prefix", "AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX")
+	_ = v.BindEnv("session_persistence.s3.endpoint", "AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT")
+
+	// Asset backend configuration
+	_ = v.BindEnv("asset.backend", "AGENTAPI_ASSET_BACKEND")
+	_ = v.BindEnv("asset.public_base_url", "AGENTAPI_ASSET_PUBLIC_BASE_URL")
+	_ = v.BindEnv("asset.storage_path", "AGENTAPI_ASSET_STORAGE_PATH")
+	_ = v.BindEnv("asset.s3.bucket", "AGENTAPI_ASSET_S3_BUCKET")
+	_ = v.BindEnv("asset.s3.region", "AGENTAPI_ASSET_S3_REGION")
+	_ = v.BindEnv("asset.s3.prefix", "AGENTAPI_ASSET_S3_PREFIX")
+	_ = v.BindEnv("asset.s3.endpoint", "AGENTAPI_ASSET_S3_ENDPOINT")
+
+	// External memory-server backend configuration
+	_ = v.BindEnv("memory.external.url", "AGENTAPI_MEMORY_EXTERNAL_URL")
+	_ = v.BindEnv("memory.external.admin_token", "AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN")
+
+	// Redis configuration
+	_ = v.BindEnv("redis.addr", "AGENTAPI_REDIS_ADDR")
+	_ = v.BindEnv("redis.password", "AGENTAPI_REDIS_PASSWORD")
+	_ = v.BindEnv("redis.db", "AGENTAPI_REDIS_DB")
+	_ = v.BindEnv("redis.tls_enabled", "AGENTAPI_REDIS_TLS_ENABLED")
+	_ = v.BindEnv("redis.dial_timeout", "AGENTAPI_REDIS_DIAL_TIMEOUT")
+	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
+	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
+
+}
+
+// setDefaults sets default values for viper configuration
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("binary_path", "ccplant")
+	// Auth defaults
+	v.SetDefault("auth.bootstrap_admin.enabled", false)
+	v.SetDefault("auth.bootstrap_admin.user_id", "bootstrap-admin")
+	v.SetDefault("auth.bootstrap_admin.username", "admin")
+	v.SetDefault("auth.bootstrap_admin.token", "")
+	v.SetDefault("auth.static.enabled", false)
+	v.SetDefault("auth.static.header_name", "X-API-Key")
+	v.SetDefault("auth.github.enabled", false)
+	v.SetDefault("auth.github.base_url", "https://api.github.com")
+	v.SetDefault("auth.github.token_header", "Authorization")
+	v.SetDefault("auth.github.oauth.client_id", "")
+	v.SetDefault("auth.github.oauth.client_secret", "")
+	v.SetDefault("auth.github.oauth.scope", "read:user read:org project")
+	v.SetDefault("auth.github.oauth.base_url", "")
+
+	// AWS auth defaults
+	v.SetDefault("auth.aws.enabled", false)
+	v.SetDefault("auth.aws.region", "ap-northeast-1")
+	v.SetDefault("auth.aws.allowed_account_ids", []string{})
+	v.SetDefault("auth.aws.team_tag_key", "Team")
+	v.SetDefault("auth.aws.cache_ttl", "1h")
+	v.SetDefault("usage.enabled", false)
+
+	// Role-based environment files defaults
+	v.SetDefault("role_env_files.enabled", false)
+	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
+	v.SetDefault("role_env_files.load_default", true)
+
+	// Kubernetes session defaults
+	v.SetDefault("kubernetes_session.namespace", "")
+	v.SetDefault("kubernetes_session.image", "")
+	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
+	v.SetDefault("kubernetes_session.service_account", "agentapi-proxy-session")
+	v.SetDefault("kubernetes_session.base_port", 9000)
+	v.SetDefault("kubernetes_session.cpu_request", "500m")
+	v.SetDefault("kubernetes_session.cpu_limit", "2")
+	v.SetDefault("kubernetes_session.memory_request", "512Mi")
+	v.SetDefault("kubernetes_session.memory_limit", "4Gi")
+	v.SetDefault("kubernetes_session.pvc_enabled", true)
+	v.SetDefault("kubernetes_session.pvc_storage_class", "")
+	v.SetDefault("kubernetes_session.pvc_storage_size", "10Gi")
+	v.SetDefault("kubernetes_session.pod_start_timeout", 120)
+	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
+	v.SetDefault("kubernetes_session.provisioner_proxy_url", "")
+	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.3")
+	v.SetDefault("kubernetes_session.network_filter_cpu_request", "250m")
+	v.SetDefault("kubernetes_session.network_filter_cpu_limit", "1000m")
+	v.SetDefault("kubernetes_session.network_filter_memory_request", "256Mi")
+	v.SetDefault("kubernetes_session.network_filter_memory_limit", "512Mi")
+	v.SetDefault("kubernetes_session.network_filter_init_cpu_request", "50m")
+	v.SetDefault("kubernetes_session.network_filter_init_cpu_limit", "100m")
+	v.SetDefault("kubernetes_session.network_filter_init_memory_request", "32Mi")
+	v.SetDefault("kubernetes_session.network_filter_init_memory_limit", "64Mi")
+	v.SetDefault("kubernetes_session.github_secret_name", "")
+	v.SetDefault("worker.control_api_url", "")
+	v.SetDefault("worker.control_api_token", "")
+	v.SetDefault("session_manager.api_url", "")
+	v.SetDefault("session_manager.api_token", "")
+	v.SetDefault("session_manager.internal_api_token", "")
+	v.SetDefault("session_manager.allocation.lease_duration", "15s")
+	v.SetDefault("session_manager.allocation.renew_deadline", "10s")
+	v.SetDefault("session_manager.allocation.retry_period", "2s")
+
+	// Settings base secret default (single base Secret shared by all sessions,
+	// merged with team/user settings at session settings generation time)
+	v.SetDefault("kubernetes_session.settings_base_secret", "agentapi-settings-base")
+
+	// Schedule worker defaults
+	v.SetDefault("schedule_worker.enabled", true)
+	v.SetDefault("schedule_worker.check_interval", "30s")
+	v.SetDefault("schedule_worker.namespace", "")
+	v.SetDefault("schedule_worker.lease_duration", "15s")
+	v.SetDefault("schedule_worker.renew_deadline", "10s")
+	v.SetDefault("schedule_worker.retry_period", "2s")
+
+	// Slackbot cleanup worker defaults
+	v.SetDefault("slackbot_cleanup_worker.enabled", false)
+	v.SetDefault("slackbot_cleanup_worker.check_interval", "1h")
+	v.SetDefault("slackbot_cleanup_worker.session_ttl", "72h")
+	v.SetDefault("slackbot_cleanup_worker.session_ttl_check_interval", "1m")
+	v.SetDefault("slackbot_cleanup_worker.namespace", "")
+	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
+	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
+	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
+
+	// Stock inventory worker defaults
+	v.SetDefault("stock_inventory_worker.enabled", false)
+	v.SetDefault("stock_inventory_worker.check_interval", "30s")
+	v.SetDefault("stock_inventory_worker.target_count", 2)
+	v.SetDefault("stock_inventory_worker.docker_enabled", false)
+	v.SetDefault("stock_inventory_worker.namespace", "")
+	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
+	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
+	v.SetDefault("stock_inventory_worker.retry_period", "2s")
+
+	// Webhook defaults
+	v.SetDefault("webhook.base_url", "")
+	v.SetDefault("webhook.github_enterprise_host", "")
+
+	// scia defaults
+	v.SetDefault("scia.enabled", false)
+	v.SetDefault("scia.public_base_url", "")
+	v.SetDefault("scia.oauth_internal_url", "")
+	v.SetDefault("scia.proxy_url", "")
+	v.SetDefault("scia.credential", "")
+	v.SetDefault("scia.user_namespace", "")
+	v.SetDefault("scia.no_proxy", "localhost,127.0.0.1,.svc,.cluster.local")
+	v.SetDefault("scia.session_sidecar_enabled", false)
+	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.17.0")
+	v.SetDefault("scia.session_sidecar_config_image", "busybox:1.36")
+	v.SetDefault("scia.session_sidecar_port", 18081)
+	v.SetDefault("scia.google_hosts", []string{"www.googleapis.com"})
+	v.SetDefault("scia.google_paths", []string{"/calendar/v3/*"})
+	v.SetDefault("scia.todoist_credential", "")
+	v.SetDefault("scia.todoist_hosts", []string{"api.todoist.com"})
+	v.SetDefault("scia.todoist_paths", []string{"/api/v1/*", "/rest/v2/*", "/sync/v9/*"})
+
+	// Memory backend defaults
+	v.SetDefault("memory.backend", "kubernetes")
+	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
+	v.SetDefault("memory.s3.region", "")
+	v.SetDefault("memory.s3.endpoint", "")
+	v.SetDefault("session_persistence.backend", "")
+	v.SetDefault("session_persistence.path", "/var/lib/agentapi-session-state")
+	v.SetDefault("session_persistence.suspend_after", "1h")
+	v.SetDefault("session_persistence.s3.prefix", "agentapi-sessions/")
+	v.SetDefault("memory.external.url", "")
+	v.SetDefault("memory.external.admin_token", "")
+
+	// Asset backend defaults
+	v.SetDefault("asset.backend", "nginx")
+	v.SetDefault("asset.public_base_url", "")
+	v.SetDefault("asset.storage_path", "/var/lib/agentapi-assets")
+	v.SetDefault("asset.s3.prefix", "agentapi-assets/")
+	v.SetDefault("asset.s3.region", "")
+	v.SetDefault("asset.s3.endpoint", "")
+
+	// Slack defaults
+	v.SetDefault("slack.dry_run", false)
+
+	// Redis defaults (empty addr = disabled)
+	v.SetDefault("redis.addr", "")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
+	v.SetDefault("redis.tls_enabled", false)
+	v.SetDefault("redis.dial_timeout", "5s")
+	v.SetDefault("redis.read_timeout", "3s")
+	v.SetDefault("redis.write_timeout", "3s")
+}
+
+// applyConfigDefaults applies default values to any unset configuration fields
+func applyConfigDefaults(config *Config) {
+
+	// Apply auth defaults
+	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
+		config.Auth.Static.HeaderName = "X-API-Key"
+	}
+	if config.Auth.BootstrapAdmin != nil {
+		if config.Auth.BootstrapAdmin.UserID == "" {
+			config.Auth.BootstrapAdmin.UserID = "bootstrap-admin"
+		}
+		if config.Auth.BootstrapAdmin.Username == "" {
+			config.Auth.BootstrapAdmin.Username = "admin"
+		}
+	}
+	if config.Auth.GitHub != nil {
+		if config.Auth.GitHub.BaseURL == "" {
+			config.Auth.GitHub.BaseURL = "https://api.github.com"
+		}
+		if config.Auth.GitHub.TokenHeader == "" {
+			config.Auth.GitHub.TokenHeader = "Authorization"
+		}
+		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
+			config.Auth.GitHub.OAuth.Scope = "read:user read:org project"
+		}
+	}
+	if config.Asset.Backend == "" {
+		config.Asset.Backend = "nginx"
+	}
+	if config.Asset.StoragePath == "" {
+		config.Asset.StoragePath = "/var/lib/agentapi-assets"
+	}
+	if config.Asset.S3 != nil && config.Asset.S3.Prefix == "" {
+		config.Asset.S3.Prefix = "agentapi-assets/"
+	}
+	if config.Scia.NoProxy == "" {
+		config.Scia.NoProxy = "localhost,127.0.0.1,.svc,.cluster.local"
+	}
+	if config.Scia.SessionSidecarImage == "" {
+		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.17.0"
+	}
+	if config.Scia.SessionSidecarConfigImage == "" {
+		config.Scia.SessionSidecarConfigImage = "busybox:1.36"
+	}
+	if config.Scia.SessionSidecarPort == 0 {
+		config.Scia.SessionSidecarPort = 18081
+	}
+	if len(config.Scia.GoogleHosts) == 0 {
+		config.Scia.GoogleHosts = []string{"www.googleapis.com"}
+	}
+	if len(config.Scia.GooglePaths) == 0 {
+		config.Scia.GooglePaths = []string{"/calendar/v3/*"}
+	}
+	if len(config.Scia.TodoistHosts) == 0 {
+		config.Scia.TodoistHosts = []string{"api.todoist.com"}
+	}
+	if len(config.Scia.TodoistPaths) == 0 {
+		config.Scia.TodoistPaths = []string{"/api/v1/*", "/rest/v2/*", "/sync/v9/*"}
+	}
+}
+
+// postProcessConfig applies post-processing logic to the configuration
+func postProcessConfig(config *Config) error {
+	// Set default auth configuration
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		if config.Auth.GitHub.OAuth.BaseURL == "" {
+			config.Auth.GitHub.OAuth.BaseURL = config.Auth.GitHub.BaseURL
+		}
+	}
+
+	// Expand environment variables in OAuth configuration (for ${VAR_NAME} syntax in config files)
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		config.Auth.GitHub.OAuth.ClientID = expandEnvVars(config.Auth.GitHub.OAuth.ClientID)
+		config.Auth.GitHub.OAuth.ClientSecret = expandEnvVars(config.Auth.GitHub.OAuth.ClientSecret)
+	}
+
+	// Log OAuth configuration status (after expansion)
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		log.Printf("[CONFIG] OAuth ClientID configured: %v", config.Auth.GitHub.OAuth.ClientID != "")
+		log.Printf("[CONFIG] OAuth ClientSecret configured: %v", config.Auth.GitHub.OAuth.ClientSecret != "")
+
+		// Warn if OAuth is configured but credentials are missing
+		if config.Auth.GitHub.OAuth.ClientID == "" || config.Auth.GitHub.OAuth.ClientSecret == "" {
+			log.Printf("[CONFIG] Warning: OAuth is configured but Client ID or Client Secret is missing")
+		}
+	}
+
+	// Log role-based environment files configuration
+	if config.RoleEnvFiles.Enabled {
+		log.Printf("[CONFIG] Role-based environment files enabled")
+		log.Printf("[CONFIG] Environment files path: %s", config.RoleEnvFiles.Path)
+		log.Printf("[CONFIG] Load default.env: %v", config.RoleEnvFiles.LoadDefault)
+	}
+
+	// Load API keys from external file if specified
+	if config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
+		if err := config.loadAPIKeysFromFile(); err != nil {
+			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
+		}
+	}
+
+	// Load kubernetes session config from external file if specified
+	if config.KubernetesSession.ConfigFile != "" {
+		if err := loadK8sSessionConfigFromFile(config, config.KubernetesSession.ConfigFile); err != nil {
+			log.Printf("[CONFIG] Warning: Failed to load kubernetes session config from %s: %v", config.KubernetesSession.ConfigFile, err)
+		} else {
+			log.Printf("[CONFIG] Loaded kubernetes session config from: %s", config.KubernetesSession.ConfigFile)
+		}
+	}
+
+	return nil
+}
+
+// LoadConfigLegacy loads configuration from a JSON file (legacy method)
+func LoadConfigLegacy(filename string) (*Config, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close config file: %v", err)
+		}
+	}()
+
+	var config Config
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&config); err != nil {
+		return nil, err
+	}
+
+	applyConfigDefaults(&config)
+
+	// Apply post-processing
+	if err := postProcessConfig(&config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// expandEnvVars expands environment variables in the form ${VAR_NAME}
+func expandEnvVars(s string) string {
+	if s == "" {
+		return s
+	}
+
+	// Match ${VAR_NAME} pattern
+	re := regexp.MustCompile(`\$\{([^}]+)\}`)
+	return re.ReplaceAllStringFunc(s, func(match string) string {
+		// Extract variable name (remove ${})
+		varName := strings.TrimPrefix(strings.TrimSuffix(match, "}"), "${")
+
+		// Get environment variable value
+		if value := os.Getenv(varName); value != "" {
+			return value
+		}
+
+		// Return original string if environment variable is not set
+		log.Printf("[CONFIG] Warning: Environment variable %s is not set", varName)
+		return match
+	})
+}
+
+// DefaultConfig returns a default configuration
+func DefaultConfig() *Config {
+	return &Config{
+		Auth: AuthConfig{
+			Static: &StaticAuthConfig{
+				Enabled:    false,
+				HeaderName: "X-API-Key",
+				APIKeys:    []APIKey{},
+			},
+			BootstrapAdmin: &BootstrapAdminAuthConfig{
+				Enabled:  false,
+				UserID:   "bootstrap-admin",
+				Username: "admin",
+			},
+		},
+		StockInventoryWorker: StockInventoryWorkerConfig{
+			Enabled:       false,
+			CheckInterval: "30s",
+			TargetCount:   2,
+			DockerEnabled: false,
+			LeaseDuration: "15s",
+			RenewDeadline: "10s",
+			RetryPeriod:   "2s",
+		},
+		Asset: AssetConfig{
+			Backend:     "nginx",
+			StoragePath: "/var/lib/agentapi-assets",
+			S3: &AssetS3Config{
+				Prefix: "agentapi-assets/",
+			},
+		},
+	}
+}
+
+// loadAPIKeysFromFile loads API keys from an external JSON file
+func (c *Config) loadAPIKeysFromFile() error {
+	file, err := os.Open(c.Auth.Static.KeysFile)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close API keys file: %v", err)
+		}
+	}()
+
+	var keysData struct {
+		APIKeys []APIKey `json:"api_keys"`
+	}
+
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&keysData); err != nil {
+		return err
+	}
+
+	c.Auth.Static.APIKeys = keysData.APIKeys
+	return nil
+}
+
+// ValidateAPIKey validates an API key and returns user information
+func (c *Config) ValidateAPIKey(key string) (*APIKey, bool) {
+	if c.Auth.Static == nil || !c.Auth.Static.Enabled {
+		return nil, false
+	}
+
+	for _, apiKey := range c.Auth.Static.APIKeys {
+		if apiKey.Key == key {
+			// Check if key is expired
+			if apiKey.ExpiresAt != "" {
+				expiryTime, err := time.Parse(time.RFC3339, apiKey.ExpiresAt)
+				if err != nil {
+					log.Printf("Invalid expiry time format for API key: %v", err)
+					continue
+				}
+				if time.Now().After(expiryTime) {
+					maskedExpiredKey := key
+					if len(key) > 8 {
+						maskedExpiredKey = key[:8] + "***"
+					} else if len(key) > 0 {
+						maskedExpiredKey = key[:1] + "***"
+					}
+					log.Printf("API key expired for user %s (key: %s)", apiKey.UserID, maskedExpiredKey)
+					continue
+				}
+			}
+			return &apiKey, true
+		}
+	}
+	// Log invalid API key attempt with masked key for security
+	maskedKey := key
+	if len(key) > 8 {
+		maskedKey = key[:8] + "***"
+	} else if len(key) > 0 {
+		maskedKey = key[:1] + "***"
+	}
+	log.Printf("API key validation failed: invalid key %s", maskedKey)
+	return nil, false
+}
+
+// HasPermission checks if a user has a specific permission
+func (apiKey *APIKey) HasPermission(permission string) bool {
+	for _, perm := range apiKey.Permissions {
+		if perm == permission || perm == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// AuthConfigOverride represents auth configuration overrides from external file
+type AuthConfigOverride struct {
+	GitHub *GitHubAuthConfigOverride `json:"github,omitempty" yaml:"github,omitempty"`
+}
+
+// GitHubAuthConfigOverride represents GitHub auth configuration overrides
+type GitHubAuthConfigOverride struct {
+	UserMapping *GitHubUserMapping `json:"user_mapping,omitempty" yaml:"user_mapping,omitempty"`
+}
+
+// LoadAuthConfigFromFile loads auth configuration from an external file (e.g., ConfigMap)
+func LoadAuthConfigFromFile(config *Config, filename string) error {
+	return loadAuthConfigFromFile(config, filename)
+}
+
+// loadAuthConfigFromFile loads auth configuration from an external file (e.g., ConfigMap)
+func loadAuthConfigFromFile(config *Config, filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close auth config file: %v", err)
+		}
+	}()
+
+	var authOverride AuthConfigOverride
+
+	// Determine file format based on extension
+	if strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") {
+		// Use yaml package directly for YAML files
+		decoder := yaml.NewDecoder(file)
+		if err := decoder.Decode(&authOverride); err != nil {
+			return err
+		}
+	} else {
+		// Default to JSON
+		decoder := json.NewDecoder(file)
+		if err := decoder.Decode(&authOverride); err != nil {
+			return err
+		}
+	}
+
+	// Apply overrides to the main config
+	if authOverride.GitHub != nil {
+		// Initialize GitHub config if it doesn't exist
+		if config.Auth.GitHub == nil {
+			config.Auth.GitHub = &GitHubAuthConfig{}
+		}
+
+		// Override user mapping if provided
+		if authOverride.GitHub.UserMapping != nil {
+			log.Printf("[CONFIG] Applying GitHub user mapping from external config:")
+			log.Printf("[CONFIG]   Default role: %s", authOverride.GitHub.UserMapping.DefaultRole)
+			log.Printf("[CONFIG]   Default permissions: %v", authOverride.GitHub.UserMapping.DefaultPermissions)
+			log.Printf("[CONFIG]   Team role mappings: %+v", authOverride.GitHub.UserMapping.TeamRoleMapping)
+
+			config.Auth.GitHub.UserMapping = *authOverride.GitHub.UserMapping
+			log.Printf("[CONFIG] Applied GitHub user mapping from external config")
+
+			// Verify the configuration was applied
+			log.Printf("[CONFIG] After applying - Default role: %s", config.Auth.GitHub.UserMapping.DefaultRole)
+			log.Printf("[CONFIG] After applying - Default permissions: %v", config.Auth.GitHub.UserMapping.DefaultPermissions)
+			log.Printf("[CONFIG] After applying - Team role mappings: %+v", config.Auth.GitHub.UserMapping.TeamRoleMapping)
+		}
+	} else {
+		log.Printf("[CONFIG] No GitHub config found in auth override file")
+	}
+
+	return nil
+}
+
+// K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
+type K8sSessionConfigOverride struct {
+	KubernetesSession *struct {
+		NodeSelector map[string]string      `json:"node_selector,omitempty" yaml:"node_selector"`
+		Affinity     map[string]interface{} `json:"affinity,omitempty" yaml:"affinity"`
+		Tolerations  []Toleration           `json:"tolerations,omitempty" yaml:"tolerations"`
+	} `json:"kubernetes_session,omitempty" yaml:"kubernetes_session"`
+}
+
+// loadK8sSessionConfigFromFile loads kubernetes session configuration from an external file
+func loadK8sSessionConfigFromFile(config *Config, filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close kubernetes session config file: %v", err)
+		}
+	}()
+
+	var k8sOverride K8sSessionConfigOverride
+
+	// Determine file format based on extension
+	if strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") {
+		decoder := yaml.NewDecoder(file)
+		if err := decoder.Decode(&k8sOverride); err != nil {
+			return err
+		}
+	} else {
+		decoder := json.NewDecoder(file)
+		if err := decoder.Decode(&k8sOverride); err != nil {
+			return err
+		}
+	}
+
+	// Apply overrides to the main config
+	if k8sOverride.KubernetesSession != nil {
+		if k8sOverride.KubernetesSession.NodeSelector != nil {
+			config.KubernetesSession.NodeSelector = k8sOverride.KubernetesSession.NodeSelector
+			log.Printf("[CONFIG] Applied kubernetes session node_selector: %v", config.KubernetesSession.NodeSelector)
+		}
+		if k8sOverride.KubernetesSession.Affinity != nil {
+			config.KubernetesSession.Affinity = k8sOverride.KubernetesSession.Affinity
+			log.Printf("[CONFIG] Applied kubernetes session affinity: %v", config.KubernetesSession.Affinity)
+		}
+		if k8sOverride.KubernetesSession.Tolerations != nil {
+			config.KubernetesSession.Tolerations = k8sOverride.KubernetesSession.Tolerations
+			log.Printf("[CONFIG] Applied kubernetes session tolerations: %+v", config.KubernetesSession.Tolerations)
+		}
+	}
+
+	return nil
+}

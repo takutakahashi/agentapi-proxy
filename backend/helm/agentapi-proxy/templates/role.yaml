@@ -1,0 +1,59 @@
+{{- $manager := .Values.sessionManager | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- if and ($manager.enabled | default false) ($k8s.enabled | default false) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-manager
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    # update: required for adoptStockSession when stock sessions run as Pods.
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    # list is also needed when synchronizing the inherited session Role: the
+    # manager cannot grant a permission that its own service account lacks.
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    # patch: required for UpdateSlackLastMessageAt (agentapi.proxy/slack-last-message-at annotation)
+    # update: required for UpdateServiceAnnotation (e.g. agentapi.proxy/updated-at annotation)
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    # Lazy chat recovery checks whether the session Service has a ready Pod.
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    # update/patch: required when a stock session is adopted and its PVC
+    # owner reference is transferred to the allocated workload.
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    # update/patch: required for adoptStockSession (removing agentapi.proxy/stock label)
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    # Parent runtime profiles may select a service account that does not exist
+    # yet in the external manager namespace.
+    verbs: ["get", "create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    # Keep the inherited session service account permissions synchronized with
+    # the runtime profile advertised by the parent API.
+    verbs: ["get", "create", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    # Remote replicas elect exactly one upstream allocation/control worker.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- end }}

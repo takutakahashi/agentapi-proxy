@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "session-manager.fullname" . }}
+  labels:
+    {{- include "session-manager.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "session-manager.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "session-manager.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "session-manager.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: session-manager
+          image: {{ include "session-manager.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ccplant"]
+          args: ["session-manager", "--port", {{ .Values.service.port | quote }}]
+          {{- with .Values.securityContext }}
+          securityContext: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - {name: http, containerPort: {{ .Values.service.port }}, protocol: TCP}
+          env:
+            - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
+            - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "parent.url is required" .Values.parent.url | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "runner.managerId is required" .Values.runner.managerId | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "runner.pool is required" .Values.runner.pool | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ required "parent.publicUrl is required" .Values.parent.publicUrl | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_API_URL, value: {{ printf "http://%s.%s.svc.cluster.local:%v" (include "session-manager.fullname" .) .Release.Namespace .Values.service.port | quote }}}
+            - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ required "parent.connectionTokenSecretRef.name is required" .Values.parent.connectionTokenSecretRef.name | quote }}, key: {{ .Values.parent.connectionTokenSecretRef.key | quote }}}}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom: {secretKeyRef: {name: {{ required "parent.hmacSecretRef.name is required" .Values.parent.hmacSecretRef.name | quote }}, key: {{ .Values.parent.hmacSecretRef.key | quote }}}}
+            - name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ required "internalApi.tokenSecretRef.name is required" .Values.internalApi.tokenSecretRef.name | quote }}, key: {{ .Values.internalApi.tokenSecretRef.key | quote }}}}
+            {{- if .Values.encryption.keySecretRef.name }}
+            - name: AGENTAPI_ENCRYPTION_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.encryption.keySecretRef.name | quote }}, key: {{ .Values.encryption.keySecretRef.key | quote }}}}
+            {{- end }}
+            - {name: AGENTAPI_KV_STORE_BACKEND, value: {{ .Values.kvStore.backend | quote }}}
+            - {name: AGENTAPI_KV_STORE_NAMESPACE, value: {{ .Values.kvStore.namespace | default .Release.Namespace | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ .Values.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ .Values.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ .Values.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_IMAGE, value: {{ .Values.session.image | default (include "session-manager.image" .) | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ .Values.session.networkFilterImage | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ .Values.session.imagePullPolicy | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: {{ .Values.session.serviceAccountName | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_BASE_PORT, value: {{ .Values.session.basePort | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_CPU_REQUEST, value: {{ .Values.session.resources.requests.cpu | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_CPU_LIMIT, value: {{ .Values.session.resources.limits.cpu | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST, value: {{ .Values.session.resources.requests.memory | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT, value: {{ .Values.session.resources.limits.memory | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PVC_ENABLED, value: {{ .Values.session.pvc.enabled | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS, value: {{ .Values.session.pvc.storageClass | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE, value: {{ .Values.session.pvc.storageSize | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_POD_START_TIMEOUT, value: {{ .Values.session.podStartTimeout | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT, value: {{ .Values.session.podStopTimeout | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL, value: {{ printf "http://%s.%s.svc.cluster.local:%v" (include "session-manager.fullname" .) .Release.Namespace .Values.service.port | quote }}}
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ required "session.provisioner.tokenSecretRef.name is required" .Values.session.provisioner.tokenSecretRef.name | quote }}, key: {{ .Values.session.provisioner.tokenSecretRef.key | quote }}}}
+            {{- with .Values.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, initialDelaySeconds: 2, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /livez, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
+          {{- with .Values.resources }}
+          resources: {{ toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}

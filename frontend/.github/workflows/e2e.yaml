@@ -1,0 +1,96 @@
+---
+name: E2E Tests
+
+'on':
+  push:
+    branches: [main]
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  e2e-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout agentapi-ui
+        uses: actions/checkout@v4
+        with:
+          path: agentapi-ui
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.11'
+
+      - name: Download agentapi binary from releases
+        run: |
+          # Get the latest release from GitHub API
+          LATEST_RELEASE=$(curl -s \
+            https://api.github.com/repos/coder/agentapi/releases/latest | \
+            grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "Latest agentapi release: $LATEST_RELEASE"
+
+          # Download the binary for Linux AMD64
+          DOWNLOAD_URL="https://github.com/coder/agentapi/releases/download/${LATEST_RELEASE}/agentapi-linux-amd64"
+          echo "Downloading from: $DOWNLOAD_URL"
+
+          curl -L -o agentapi "$DOWNLOAD_URL"
+          chmod +x agentapi
+
+          # Verify the binary works
+          ./agentapi --version
+
+      - name: Start agentapi service
+        run: |
+          # Start agentapi in background
+          ./agentapi &
+          echo $! > agentapi.pid
+
+          # Wait for service to be ready
+          timeout 30 bash -c \
+            'until curl -f http://localhost:8080/health; do sleep 1; done'
+        env:
+          AGENTAPI_PORT: 8080
+
+      - name: Install UI dependencies
+        working-directory: agentapi-ui
+        run: bun install --frozen-lockfile
+
+      - name: Build UI
+        working-directory: agentapi-ui
+        run: bun run build
+
+      - name: Start UI service
+        working-directory: agentapi-ui
+        run: |
+          bun run start &
+          echo $! > ui.pid
+
+          # Wait for UI to be ready
+          timeout 30 bash -c \
+            'until curl -f http://localhost:3000; do sleep 1; done'
+        env:
+          AGENTAPI_URL: http://localhost:8080
+
+      - name: Run E2E tests
+        working-directory: agentapi-ui
+        run: |
+          # Add your e2e test command here
+          # For example, if using Playwright:
+          # bun run test:e2e
+          # For now, just verify both services are running
+          curl -f http://localhost:8080/health
+          curl -f http://localhost:3000
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Stop services
+          if [ -f agentapi.pid ]; then
+            kill $(cat agentapi.pid) || true
+          fi
+          if [ -f agentapi-ui/ui.pid ]; then
+            kill $(cat agentapi-ui/ui.pid) || true
+          fi

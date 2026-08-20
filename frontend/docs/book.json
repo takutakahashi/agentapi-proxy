@@ -1,0 +1,11 @@
+{
+  "title": "agentapi-ui ドキュメント",
+  "description": "agentapi-ui の完全なドキュメント",
+  "language": "ja",
+  "gitbook": "3.2.3",
+  "root": ".",
+  "structure": {
+    "readme": "README.md",
+    "summary": "SUMMARY.md"
+  }
+}

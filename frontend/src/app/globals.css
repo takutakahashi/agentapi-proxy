@@ -1,0 +1,165 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 214, 219, 220;
+  --background-end-rgb: 255, 255, 255;
+  
+  /* Theme colors - dynamically updated by ThemeProvider */
+  --main-color: #3b82f6;
+  --main-color-rgb: 59, 130, 246;
+  --main-color-light: rgb(99, 170, 246);
+  --main-color-dark: rgb(19, 90, 206);
+  --main-color-ring: rgba(59, 130, 246, 0.5);
+  --main-color-bg: rgba(59, 130, 246, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+  }
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Mobile viewport fixes */
+@supports (height: 100dvh) {
+  .h-dvh {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}
+
+@supports not (height: 100dvh) {
+  .h-dvh {
+    height: 100vh;
+    min-height: 100vh;
+  }
+}
+
+/* Scroll fixes */
+.mobile-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  will-change: scroll-position;
+}
+
+/* Theme-based utility classes */
+.bg-main-color {
+  background-color: var(--main-color);
+}
+
+.text-main-color {
+  color: var(--main-color);
+}
+
+.border-main-color {
+  border-color: var(--main-color);
+}
+
+.ring-main-color {
+  --tw-ring-color: var(--main-color-ring);
+}
+
+.focus\:ring-main-color:focus {
+  --tw-ring-color: var(--main-color-ring);
+}
+
+.hover\:bg-main-color:hover {
+  background-color: var(--main-color);
+}
+
+.hover\:bg-main-color-light:hover {
+  background-color: var(--main-color-light);
+}
+
+.hover\:bg-main-color-dark:hover {
+  background-color: var(--main-color-dark);
+}
+
+.bg-main-color-bg {
+  background-color: var(--main-color-bg);
+}
+
+.bg-main-color-light {
+  background-color: var(--main-color-light);
+}
+
+.bg-main-color-dark {
+  background-color: var(--main-color-dark);
+}
+
+.border-l-main-color {
+  border-left-color: var(--main-color);
+}
+
+.border-main-color-dark {
+  border-color: var(--main-color-dark);
+}
+
+.border-b-main-color {
+  border-bottom-color: var(--main-color);
+}
+
+/* Profile color indicator */
+.profile-color-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Mobile-specific improvements */
+@media (max-width: 768px) {
+  /* Adjust container padding for mobile */
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  /* Prevent zoom on input focus */
+  input[type="text"],
+  input[type="email"],
+  input[type="number"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="search"],
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Toast animation */
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}

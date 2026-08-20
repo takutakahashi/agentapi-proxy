@@ -1,0 +1,71 @@
+{{- if .Values.ingress.enabled -}}
+{{- $ingressClassName := .Values.ingress.className }}
+{{- if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- $ingressClassName = .Values.global.ingress.className | default $ingressClassName }}
+  {{- end }}
+{{- end }}
+{{- $tlsEnabled := false }}
+{{- if .Values.ingress.tls }}
+  {{- $tlsEnabled = true }}
+{{- else if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- if .Values.global.ingress.tls }}
+      {{- $tlsEnabled = .Values.global.ingress.tls.enabled | default false }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $hostname := "" }}
+{{- if .Values.global }}
+  {{- $hostname = .Values.global.hostname | default .Values.hostname }}
+{{- else }}
+  {{- $hostname = .Values.hostname }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agentapi-ui.fullname" . }}
+  labels:
+    {{- include "agentapi-ui.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if and $ingressClassName (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+  ingressClassName: {{ $ingressClassName }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- else if and $tlsEnabled $hostname }}
+  tls:
+    - hosts:
+        - {{ $hostname | quote }}
+      secretName: {{ include "agentapi-ui.fullname" . }}-tls
+  {{- end }}
+  rules:
+    - host: {{ $hostname }}
+      http:
+        paths:
+          - path: /
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-ui.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+              {{- else }}
+              serviceName: {{ include "agentapi-ui.fullname" . }}
+              servicePort: {{ .Values.service.port }}
+              {{- end }}
+{{- end }}

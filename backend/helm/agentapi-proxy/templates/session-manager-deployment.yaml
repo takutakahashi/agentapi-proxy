@@ -1,0 +1,322 @@
+{{- $manager := .Values.sessionManager | default dict }}
+{{- if (dig "enabled" false $manager) }}
+{{- $image := $manager.image | default dict }}
+{{- $internalToken := dig "internalApi" "tokenSecretRef" (dict) $manager }}
+{{- $encryptionToken := dig "encryption" "keySecretRef" (dict) $manager }}
+{{- $registration := $manager.externalRegistration | default dict }}
+{{- $runner := $manager.runner | default dict }}
+{{- $remoteMode := or (dig "enabled" false $registration) (dig "enabled" false $runner) }}
+{{- $kv := $manager.kvStore | default dict }}
+{{- $redisClient := $manager.redis | default dict }}
+{{- $sessionPersistence := $manager.sessionPersistence | default dict }}
+{{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
+{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
+{{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
+{{- $sessionControl := $manager.sessionControl | default dict }}
+{{- /* SCIA is a release-wide session runtime. Keep the API, the standalone
+      broker and the session manager on one source of truth so externally
+      allocated sessions inherit the same sidecar configuration. */}}
+{{- $scia := .Values.scia | default dict }}
+{{- $github := $manager.github | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- $provisioner := $k8s.provisioner | default dict }}
+{{- $provisionerToken := $provisioner.tokenSecretRef | default dict }}
+{{- $control := .Values.controlPlaneService | default dict }}
+{{- $provisionerURL := $provisioner.proxyUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (dig "name" "control" $control) .Release.Namespace (dig "port" 8080 $control)) }}
+{{- $redisAddr := $redisClient.addr | default "" }}
+{{- if and (not $redisAddr) .Values.redis.enabled }}
+{{- $redisAddr = printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-manager
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
+spec:
+  replicas: {{ $manager.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: session-manager
+  template:
+    metadata:
+      {{- with $manager.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "agentapi-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: session-manager
+        {{- with $manager.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agentapi-proxy.sessionManagerServiceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with $manager.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $manager.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: session-manager
+          image: {{ include "agentapi-proxy.sessionManagerImage" . | quote }}
+          imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
+          command: ["/usr/local/bin/ccplant"]
+          args: ["session-manager", "--port", {{ $manager.port | quote }}]
+          {{- with $manager.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $manager.port }}
+              protocol: TCP
+          env:
+            - name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.internalApi.tokenSecretRef.name is required" (dig "name" "" $internalToken) | quote }}
+                  key: {{ dig "key" "token" $internalToken | quote }}
+            - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
+            # Outbound ESM control commands must be handled by the public API,
+            # not by this reduced session-manager HTTP server.
+            - {name: AGENTAPI_SESSION_MANAGER_API_URL, value: "http://{{ include "agentapi-proxy.fullname" . }}:{{ .Values.service.port }}"}
+            {{- if (dig "enabled" false $registration) }}
+            - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ dig "publicUrl" "" $registration | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "sessionManager.externalRegistration.upstreamUrl is required when external registration is enabled" (dig "upstreamUrl" "" $registration) | quote }}}
+            - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.externalRegistration.connectionTokenSecretRef.name is required when external registration is enabled" (dig "connectionTokenSecretRef" "name" "" $registration) | quote }}
+                  key: {{ dig "connectionTokenSecretRef" "key" "connection-token" $registration | quote }}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.externalRegistration.hmacSecretRef.name is required when external registration is enabled" (dig "hmacSecretRef" "name" "" $registration) | quote }}
+                  key: {{ dig "hmacSecretRef" "key" "hmac-secret" $registration | quote }}
+            {{- end }}
+            {{- if (dig "enabled" false $runner) }}
+            - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "sessionManager.runner.managerId is required when runner mode is enabled" (dig "managerId" "" $runner) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "sessionManager.runner.pool is required when runner mode is enabled" (dig "pool" "" $runner) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "sessionManager.runner.upstreamUrl is required when runner mode is enabled" (dig "upstreamUrl" "" $runner) | quote }}}
+            - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.runner.connectionTokenSecretRef.name is required when runner mode is enabled" (dig "connectionTokenSecretRef" "name" "" $runner) | quote }}
+                  key: {{ dig "connectionTokenSecretRef" "key" "connection-token" $runner | quote }}
+            {{- end }}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ dig "allocation" "retryPeriod" "2s" $manager | quote }}}
+            {{- if (dig "name" "" $encryptionToken) }}
+            - name: AGENTAPI_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ dig "name" "" $encryptionToken | quote }}
+                  key: {{ dig "key" "encryption-key" $encryptionToken | quote }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_BACKEND
+              value: {{ required "sessionManager.kvStore.backend is required" $kv.backend | quote }}
+            - name: AGENTAPI_KV_STORE_NAMESPACE
+              value: {{ $kv.namespace | default "default" | quote }}
+            {{- if ne ($kv.backend | default "") "kubernetes" }}
+            {{- if $kv.databaseUrlSecretRef.name }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kv.databaseUrlSecretRef.name | quote }}
+                  key: {{ $kv.databaseUrlSecretRef.key | default "database-url" | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              value: {{ required "sessionManager.kvStore.databaseUrl or databaseUrlSecretRef.name is required" $kv.databaseUrl | quote }}
+            {{- end }}
+            {{- if $kv.authTokenSecretRef.name }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kv.authTokenSecretRef.name | quote }}
+                  key: {{ $kv.authTokenSecretRef.key | default "auth-token" | quote }}
+            {{- else if $kv.authToken }}
+            - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
+            {{- end }}
+            {{- end }}
+            {{- if not $remoteMode }}
+            - name: AGENTAPI_REDIS_ADDR
+              value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}
+            {{- $redisSecret := $redisClient.existingSecret | default "" }}
+            {{- if and (not $redisSecret) .Values.redis.enabled .Values.redis.auth.enabled }}
+            {{- $redisSecret = printf "%s-redis" (include "agentapi-proxy.fullname" .) }}
+            {{- end }}
+            {{- with $redisSecret }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $redisClient.existingSecretPasswordKey | default "redis-password" | quote }}
+            {{- end }}
+            - {name: AGENTAPI_REDIS_DB, value: {{ $redisClient.db | default 0 | quote }}}
+            - {name: AGENTAPI_REDIS_TLS_ENABLED, value: {{ $redisClient.tlsEnabled | default false | quote }}}
+            - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
+            - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            {{- end }}
+            - {name: LOG_DIR, value: "/var/log/agentapi/sessions"}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_PATH, value: {{ $sessionPersistencePath | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER, value: {{ $sessionPersistence.suspendAfter | default "1h" | quote }}}
+            {{- if $sessionPersistenceS3.bucket }}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: {{ $sessionPersistenceS3.bucket | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION, value: {{ $sessionPersistenceS3.region | default "garage" | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX, value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT, value: {{ $sessionPersistenceS3.endpoint | default "" | quote }}}
+            {{- end }}
+            - {name: SESSION_CONTROL_LONG_POLL_ENABLED, value: {{ dig "enabled" false $sessionControl | quote }}}
+            - {name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED, value: {{ dig "directRuntimeEnabled" false $sessionControl | quote }}}
+            - {name: AGENTAPI_SCIA_ENABLED, value: {{ dig "enabled" false $scia | quote }}}
+            - {name: AGENTAPI_SCIA_PUBLIC_BASE_URL, value: {{ dig "publicBaseUrl" "" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_OAUTH_INTERNAL_URL, value: {{ dig "oauthInternalUrl" (printf "http://%s.%s.svc.cluster.local:8081" (include "agentapi-proxy.sciaServiceName" .) .Release.Namespace) $scia | quote }}}
+            - {name: AGENTAPI_SCIA_PROXY_URL, value: {{ dig "proxyUrl" "" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_CREDENTIAL, value: {{ dig "credential" "" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_USER_NAMESPACE, value: {{ dig "userNamespace" "" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_NO_PROXY, value: {{ dig "noProxy" "localhost,127.0.0.1,.svc,.cluster.local" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED, value: {{ dig "sessionSidecar" "enabled" true $scia | quote }}}
+            - {name: AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE, value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.17.0" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE, value: {{ dig "sessionSidecar" "configImage" "busybox:1.36" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_SESSION_SIDECAR_PORT, value: {{ dig "sessionSidecar" "port" 18081 $scia | quote }}}
+            - {name: AGENTAPI_SCIA_GOOGLE_HOSTS, value: {{ dig "googleHosts" (list "www.googleapis.com") $scia | join "," | quote }}}
+            - {name: AGENTAPI_SCIA_GOOGLE_PATHS, value: {{ dig "googlePaths" (list "/calendar/v3/*") $scia | join "," | quote }}}
+            - {name: AGENTAPI_SCIA_TODOIST_CREDENTIAL, value: {{ dig "todoistCredential" "default.todoist" $scia | quote }}}
+            - {name: AGENTAPI_SCIA_TODOIST_HOSTS, value: {{ dig "todoistHosts" (list "api.todoist.com") $scia | join "," | quote }}}
+            - {name: AGENTAPI_SCIA_TODOIST_PATHS, value: {{ dig "todoistPaths" (list "/api/v1/*") $scia | join "," | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - name: AGENTAPI_K8S_SESSION_IMAGE
+              value: {{ $k8s.image | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ $k8s.networkFilterImage | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST, value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT, value: {{ dig "networkFilter" "resources" "limits" "cpu" "1000m" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_REQUEST, value: {{ dig "networkFilter" "resources" "requests" "memory" "256Mi" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_LIMIT, value: {{ dig "networkFilter" "resources" "limits" "memory" "512Mi" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_REQUEST, value: {{ dig "networkFilter" "initResources" "requests" "cpu" "50m" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_LIMIT, value: {{ dig "networkFilter" "initResources" "limits" "cpu" "100m" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_REQUEST, value: {{ dig "networkFilter" "initResources" "requests" "memory" "32Mi" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_LIMIT, value: {{ dig "networkFilter" "initResources" "limits" "memory" "64Mi" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ $k8s.imagePullPolicy | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: {{ $k8s.serviceAccountName | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_BASE_PORT, value: {{ $k8s.basePort | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_CPU_REQUEST, value: {{ $k8s.resources.requests.cpu | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_CPU_LIMIT, value: {{ $k8s.resources.limits.cpu | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST, value: {{ $k8s.resources.requests.memory | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT, value: {{ $k8s.resources.limits.memory | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PVC_ENABLED, value: {{ $k8s.pvc.enabled | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS, value: {{ $k8s.pvc.storageClass | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE, value: {{ $k8s.pvc.storageSize | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_POD_START_TIMEOUT, value: {{ $k8s.podStartTimeout | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT, value: {{ $k8s.podStopTimeout | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL, value: {{ $provisionerURL | quote }}}
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.kubernetesSession.provisioner.tokenSecretRef.name is required" $provisionerToken.name | quote }}
+                  key: {{ $provisionerToken.key | default "provisioner-token" | quote }}
+            {{- if or (dig "token" "" $github) (dig "tokenRef" "name" "" $github) (and (dig "app" "id" "" $github) (dig "app" "privateKey" "secretName" "" $github)) }}
+            - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
+              value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}
+            {{- end }}
+            {{- if or (dig "enterprise" "apiUrl" "" $github) (dig "enterprise" "baseUrl" "" $github) }}
+            - name: AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME
+              value: {{ printf "%s-github-config" (include "agentapi-proxy.fullname" .) | quote }}
+            {{- end }}
+            {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations }}
+            - {name: AGENTAPI_K8S_SESSION_CONFIG_FILE, value: "/etc/k8s-session-config/k8s-session-config.yaml"}
+            {{- end }}
+            {{- if $k8s.podTemplate }}
+            - {name: AGENTAPI_K8S_SESSION_POD_TEMPLATE_FILE, value: "/etc/k8s-session-config/session-pod-template.yaml"}
+            {{- end }}
+            - {name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET, value: {{ $k8s.settingsBaseSecret | default "" | quote }}}
+            {{- $slackBotToken := dig "slackIntegration" "botToken" (dict) $k8s }}
+            {{- with (dig "secretName" "" $slackBotToken) }}
+            - {name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME, value: {{ . | quote }}}
+            - {name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY, value: {{ dig "key" "bot-token" $slackBotToken | quote }}}
+            {{- end }}
+            - {name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED, value: {{ dig "otelCollector" "enabled" false $k8s | quote }}}
+            - {name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL, value: {{ dig "otelCollector" "scrapeInterval" "15s" $k8s | quote }}}
+            - {name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT, value: {{ dig "otelCollector" "claudeCodeMetricsPort" 9464 $k8s | quote }}}
+            - {name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT, value: {{ dig "otelCollector" "exporterPort" 9090 $k8s | quote }}}
+            {{- with $manager.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $manager.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: session-logs
+              mountPath: /var/log/agentapi/sessions
+            {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate }}
+            - name: k8s-session-config
+              mountPath: /etc/k8s-session-config
+              readOnly: true
+            {{- end }}
+            {{- if eq $sessionPersistenceBackend "volume" }}
+            - name: session-state
+              mountPath: {{ $sessionPersistencePath | quote }}
+            {{- end }}
+          {{- with $manager.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $manager.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $manager.resources | nindent 12 }}
+      volumes:
+        - name: session-logs
+          emptyDir: {}
+        {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate }}
+        - name: k8s-session-config
+          configMap:
+            name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config
+        {{- end }}
+        {{- if eq $sessionPersistenceBackend "volume" }}
+        - name: session-state
+          persistentVolumeClaim:
+            claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
+        {{- end }}
+      {{- with $manager.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $manager.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $manager.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-manager
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
+  ports:
+    - name: http
+      port: {{ $manager.port }}
+      targetPort: http
+{{- end }}

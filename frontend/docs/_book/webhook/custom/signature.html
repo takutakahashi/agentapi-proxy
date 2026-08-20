@@ -1,0 +1,824 @@
+
+<!DOCTYPE HTML>
+<html lang="ja" >
+    <head>
+        <meta charset="UTF-8">
+        <title>署名検証の設定 · agentapi-ui ドキュメント</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="HonKit 6.1.4">
+        
+        
+        
+    
+    <link rel="stylesheet" href="../../gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../../gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="../../gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="../integrations/" />
+    
+    
+    <link rel="prev" href="operators.html" />
+    
+
+    </head>
+    <body>
+        
+<div class="book honkit-cloak">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="検索ワードを入力" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+
+    
+
+    
+        
+        <li class="header">はじめに</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="../../">
+            
+                <a href="../../">
+            
+                    
+                    agentapi-ui ドキュメント
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.2" data-path="../../getting-started/">
+            
+                <a href="../../getting-started/">
+            
+                    
+                    クイックスタート
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.3" data-path="../../getting-started/concepts.html">
+            
+                <a href="../../getting-started/concepts.html">
+            
+                    
+                    基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Webhook</li>
+        
+        
+    
+        <li class="chapter " data-level="2.1" data-path="../">
+            
+                <a href="../">
+            
+                    
+                    Webhook とは
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.1.1" data-path="../introduction/overview.html">
+            
+                <a href="../introduction/overview.html">
+            
+                    
+                    概要と基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.1.2" data-path="../introduction/agentapi-proxy.html">
+            
+                <a href="../introduction/agentapi-proxy.html">
+            
+                    
+                    agentapi-proxy における Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.2" data-path="../setup/">
+            
+                <a href="../setup/">
+            
+                    
+                    セットアップ
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="../github/">
+            
+                <a href="../github/">
+            
+                    
+                    GitHub Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4" data-path="./">
+            
+                <a href="./">
+            
+                    
+                    Custom Webhook
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.4.1" data-path="jsonpath.html">
+            
+                <a href="jsonpath.html">
+            
+                    
+                    JSONPath 条件の書き方
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.2" data-path="operators.html">
+            
+                <a href="operators.html">
+            
+                    
+                    演算子リファレンス
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter active" data-level="2.4.3" data-path="signature.html">
+            
+                <a href="signature.html">
+            
+                    
+                    署名検証の設定
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.5" data-path="../integrations/">
+            
+                <a href="../integrations/">
+            
+                    
+                    サービス連携例
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.6" data-path="../troubleshooting/">
+            
+                <a href="../troubleshooting/">
+            
+                    
+                    トラブルシューティング
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">API</li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" data-path="../../api/">
+            
+                <a href="../../api/">
+            
+                    
+                    API の概要
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.2" data-path="../../api/authentication.html">
+            
+                <a href="../../api/authentication.html">
+            
+                    
+                    認証
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.3" data-path="../../api/endpoints.html">
+            
+                <a href="../../api/endpoints.html">
+            
+                    
+                    エンドポイント
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">デプロイメント</li>
+        
+        
+    
+        <li class="chapter " data-level="4.1" data-path="../../deployment/">
+            
+                <a href="../../deployment/">
+            
+                    
+                    デプロイ方法
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="4.2" data-path="../../deployment/configuration.html">
+            
+                <a href="../../deployment/configuration.html">
+            
+                    
+                    設定ガイド
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">リファレンス</li>
+        
+        
+    
+        <li class="chapter " data-level="5.1" data-path="../../reference/glossary.html">
+            
+                <a href="../../reference/glossary.html">
+            
+                    
+                    用語集
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="5.2" data-path="../../reference/faq.html">
+            
+                <a href="../../reference/faq.html">
+            
+                    
+                    FAQ
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://github.com/honkit/honkit" target="blank" class="gitbook-link">
+            HonKitで公開 
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="../.." >署名検証の設定</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h1 id="署名検証の設定">署名検証の設定</h1>
+<p>Custom Webhook では、HMAC 署名を使ってリクエストが正当なソースから送信されたことを検証します。これにより、なりすましや改ざんを防ぐことができます。</p>
+<h2 id="署名検証の仕組み">署名検証の仕組み</h2>
+<pre><code>送信側:
+1. ペイロードと Secret で HMAC を計算
+2. 署名をヘッダーに追加して送信
+
+受信側 (agentapi-proxy):
+1. ヘッダーから署名を取得
+2. ペイロードと Secret で HMAC を再計算
+3. 署名が一致すれば OK、不一致なら拒否
+</code></pre><h2 id="サポートされる署名アルゴリズム">サポートされる署名アルゴリズム</h2>
+<table>
+<thead>
+<tr>
+<th>アルゴリズム</th>
+<th>ヘッダー形式</th>
+<th>使用例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SHA-256 (推奨)</td>
+<td><code>sha256=&lt;hex&gt;</code></td>
+<td>GitHub, Slack</td>
+</tr>
+<tr>
+<td>SHA-1</td>
+<td><code>sha1=&lt;hex&gt;</code></td>
+<td>古い GitHub Webhook</td>
+</tr>
+<tr>
+<td>SHA-512</td>
+<td><code>sha512=&lt;hex&gt;</code></td>
+<td>カスタム実装</td>
+</tr>
+</tbody>
+</table>
+<h2 id="基本的な設定">基本的な設定</h2>
+<h3 id="1-webhook-作成時に-secret-を取得">1. Webhook 作成時に Secret を取得</h3>
+<p>Webhook を作成すると、64文字の HEX 文字列が Secret として発行されます。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"id"</span>: <span class="hljs-string">"webhook-abc-123"</span>,
+  <span class="hljs-string">"webhook_url"</span>: <span class="hljs-string">"https://agentapi.example.com/hooks/custom/webhook-abc-123"</span>,
+  <span class="hljs-string">"secret"</span>: <span class="hljs-string">"a1b2c3d4e5f6...（64文字）"</span>
+}
+</code></pre>
+<h3 id="2-外部サービスに-secret-を設定">2. 外部サービスに Secret を設定</h3>
+<p>サービスの Webhook 設定画面で、この Secret を入力します。</p>
+<h3 id="3-署名ヘッダーの設定">3. 署名ヘッダーの設定</h3>
+<p>デフォルトでは <code>X-Signature</code> ヘッダーを使用しますが、サービスによっては異なる名前を使います。</p>
+<table>
+<thead>
+<tr>
+<th>サービス</th>
+<th>ヘッダー名</th>
+<th>アルゴリズム</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GitHub</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>SHA-256</td>
+</tr>
+<tr>
+<td>Slack</td>
+<td><code>X-Slack-Signature</code></td>
+<td>SHA-256</td>
+</tr>
+<tr>
+<td>カスタム</td>
+<td><code>X-Signature</code></td>
+<td>SHA-256</td>
+</tr>
+</tbody>
+</table>
+<h2 id="署名の計算方法">署名の計算方法</h2>
+<h3 id="sha-256-の例（nodejs）">SHA-256 の例（Node.js）</h3>
+<pre><code class="lang-javascript"><span class="hljs-keyword">const</span> crypto = <span class="hljs-built_in">require</span>(<span class="hljs-string">'crypto'</span>);
+
+<span class="hljs-keyword">const</span> secret = <span class="hljs-string">'your-webhook-secret'</span>;
+<span class="hljs-keyword">const</span> payload = <span class="hljs-title class_">JSON</span>.<span class="hljs-title function_">stringify</span>({
+  <span class="hljs-attr">event</span>: {
+    <span class="hljs-attr">type</span>: <span class="hljs-string">'alert'</span>,
+    <span class="hljs-attr">message</span>: <span class="hljs-string">'Test'</span>
+  }
+});
+
+<span class="hljs-keyword">const</span> hmac = crypto.<span class="hljs-title function_">createHmac</span>(<span class="hljs-string">'sha256'</span>, secret);
+hmac.<span class="hljs-title function_">update</span>(payload);
+<span class="hljs-keyword">const</span> signature = <span class="hljs-string">'sha256='</span> + hmac.<span class="hljs-title function_">digest</span>(<span class="hljs-string">'hex'</span>);
+
+<span class="hljs-variable language_">console</span>.<span class="hljs-title function_">log</span>(signature);
+<span class="hljs-comment">// sha256=a1b2c3d4...</span>
+</code></pre>
+<h3 id="sha-256-の例（python）">SHA-256 の例（Python）</h3>
+<pre><code class="lang-python"><span class="hljs-keyword">import</span> hmac
+<span class="hljs-keyword">import</span> hashlib
+<span class="hljs-keyword">import</span> json
+
+secret = <span class="hljs-string">b'your-webhook-secret'</span>
+payload = json.dumps({
+    <span class="hljs-string">'event'</span>: {
+        <span class="hljs-string">'type'</span>: <span class="hljs-string">'alert'</span>,
+        <span class="hljs-string">'message'</span>: <span class="hljs-string">'Test'</span>
+    }
+})
+
+signature = <span class="hljs-string">'sha256='</span> + hmac.new(
+    secret,
+    payload.encode(<span class="hljs-string">'utf-8'</span>),
+    hashlib.sha256
+).hexdigest()
+
+<span class="hljs-built_in">print</span>(signature)
+<span class="hljs-comment"># sha256=a1b2c3d4...</span>
+</code></pre>
+<h3 id="sha-256-の例（go）">SHA-256 の例（Go）</h3>
+<pre><code class="lang-go"><span class="hljs-keyword">package</span> main
+
+<span class="hljs-keyword">import</span> (
+    <span class="hljs-string">"crypto/hmac"</span>
+    <span class="hljs-string">"crypto/sha256"</span>
+    <span class="hljs-string">"encoding/hex"</span>
+    <span class="hljs-string">"fmt"</span>
+)
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">main</span><span class="hljs-params">()</span></span> {
+    secret := []<span class="hljs-type">byte</span>(<span class="hljs-string">"your-webhook-secret"</span>)
+    payload := []<span class="hljs-type">byte</span>(<span class="hljs-string">`{"event":{"type":"alert","message":"Test"}}`</span>)
+
+    h := hmac.New(sha256.New, secret)
+    h.Write(payload)
+    signature := <span class="hljs-string">"sha256="</span> + hex.EncodeToString(h.Sum(<span class="hljs-literal">nil</span>))
+
+    fmt.Println(signature)
+    <span class="hljs-comment">// sha256=a1b2c3d4...</span>
+}
+</code></pre>
+<h2 id="curl-での送信例">cURL での送信例</h2>
+<pre><code class="lang-bash">SECRET=<span class="hljs-string">"your-webhook-secret"</span>
+PAYLOAD=<span class="hljs-string">'{"event":{"type":"alert","message":"Test"}}'</span>
+
+<span class="hljs-comment"># 署名を計算</span>
+SIGNATURE=<span class="hljs-string">"sha256=<span class="hljs-subst">$(echo -n <span class="hljs-string">"<span class="hljs-variable">$PAYLOAD</span>"</span> | openssl dgst -sha256 -hmac <span class="hljs-string">"<span class="hljs-variable">$SECRET</span>"</span> | sed 's/^.* //')</span>"</span>
+
+<span class="hljs-comment"># リクエストを送信</span>
+curl -X POST https://agentapi.example.com/hooks/custom/webhook-abc-123 \
+  -H <span class="hljs-string">"X-Signature: <span class="hljs-variable">$SIGNATURE</span>"</span> \
+  -H <span class="hljs-string">"Content-Type: application/json"</span> \
+  -d <span class="hljs-string">"<span class="hljs-variable">$PAYLOAD</span>"</span>
+</code></pre>
+<h2 id="サービス別の設定例">サービス別の設定例</h2>
+<h3 id="slack">Slack</h3>
+<p>Slack は <code>X-Slack-Signature</code> ヘッダーを使い、タイムスタンプを含めた検証を行います。</p>
+<pre><code># Slack の署名ベース文字列
+sig_basestring = v0:timestamp:request_body
+
+# 署名計算
+signature = 'v0=' + hmac_sha256(signing_secret, sig_basestring)
+</code></pre><p><strong>Slack Webhook の設定</strong>:</p>
+<ol>
+<li>Slack App 設定で Webhook URL を設定</li>
+<li>Signing Secret をコピー</li>
+<li>agentapi-proxy の Secret として使用</li>
+</ol>
+<h3 id="datadog">Datadog</h3>
+<p>Datadog はカスタムヘッダーをサポートしています。</p>
+<pre><code class="lang-bash"><span class="hljs-comment"># Webhook 設定</span>
+URL: https://agentapi.example.com/hooks/custom/webhook-abc-123
+Custom Header: X-Signature
+Value: sha256=&lt;computed-signature&gt;
+</code></pre>
+<h3 id="github（参考）">GitHub（参考）</h3>
+<p>GitHub Webhook は専用のエンドポイント (<code>/hooks/github/{id}</code>) を使いますが、同様の仕組みです。</p>
+<pre><code># GitHub の署名ヘッダー
+X-Hub-Signature-256: sha256=&lt;signature&gt;
+</code></pre><h2 id="トラブルシューティング">トラブルシューティング</h2>
+<h3 id="問題-1-署名検証エラー（401-unauthorized）">問題 1: 署名検証エラー（401 Unauthorized）</h3>
+<p><strong>原因</strong>:</p>
+<ul>
+<li>Secret が間違っている</li>
+<li>ペイロードが異なる（改行、スペースなど）</li>
+<li>署名アルゴリズムが異なる</li>
+</ul>
+<p><strong>解決方法</strong>:</p>
+<ol>
+<li>Secret をコピー&amp;ペーストで正確に設定</li>
+<li>ペイロードをそのまま使って署名を計算（整形しない）</li>
+<li>正しいアルゴリズム（SHA-256 推奨）を使用</li>
+</ol>
+<h3 id="問題-2-署名ヘッダーが見つからない">問題 2: 署名ヘッダーが見つからない</h3>
+<p><strong>原因</strong>:</p>
+<ul>
+<li>ヘッダー名が間違っている</li>
+<li>サービスが署名をサポートしていない</li>
+</ul>
+<p><strong>解決方法</strong>:</p>
+<ol>
+<li>サービスのドキュメントでヘッダー名を確認</li>
+<li>Delivery Record でリクエストヘッダーを確認</li>
+</ol>
+<h3 id="問題-3-タイムスタンプエラー（slack）">問題 3: タイムスタンプエラー（Slack）</h3>
+<p><strong>原因</strong>:</p>
+<ul>
+<li>サーバー時刻がずれている</li>
+<li>Slack の場合、5分以上古いリクエストは拒否される</li>
+</ul>
+<p><strong>解決方法</strong>:</p>
+<ol>
+<li>サーバー時刻を NTP で同期</li>
+<li>タイムスタンプを検証に含める</li>
+</ol>
+<h2 id="セキュリティのベストプラクティス">セキュリティのベストプラクティス</h2>
+<h3 id="1-secret-を安全に管理">1. Secret を安全に管理</h3>
+<p>❌ <strong>やってはいけない</strong>:</p>
+<ul>
+<li>Git にコミットする</li>
+<li>プレーンテキストで保存する</li>
+<li>複数のサービスで同じ Secret を使い回す</li>
+</ul>
+<p>✅ <strong>推奨</strong>:</p>
+<ul>
+<li>環境変数や Secret 管理ツールを使用</li>
+<li>サービスごとに異なる Secret を使用</li>
+<li>定期的にローテーションする</li>
+</ul>
+<h3 id="2-https-を使用">2. HTTPS を使用</h3>
+<p>署名検証だけでなく、必ず HTTPS で通信しましょう。</p>
+<h3 id="3-レート制限">3. レート制限</h3>
+<p>同一 Webhook からの大量のリクエストを制限します。</p>
+<h3 id="4-ペイロードサイズ制限">4. ペイロードサイズ制限</h3>
+<p>最大 1MB までのペイロードに制限しています。</p>
+<h2 id="デバッグ方法">デバッグ方法</h2>
+<h3 id="1-ローカルでテスト">1. ローカルでテスト</h3>
+<pre><code class="lang-bash"><span class="hljs-comment"># ローカルで署名を計算</span>
+<span class="hljs-built_in">echo</span> -n <span class="hljs-string">'{"test": "data"}'</span> | openssl dgst -sha256 -hmac <span class="hljs-string">"your-secret"</span>
+</code></pre>
+<h3 id="2-delivery-record-を確認">2. Delivery Record を確認</h3>
+<p>agentapi-proxy の Delivery Record 機能で、受信したリクエストを確認できます。</p>
+<h3 id="3-オンラインツールを使用">3. オンラインツールを使用</h3>
+<ul>
+<li><a href="https://www.freeformatter.com/hmac-generator.html" target="_blank">HMAC Generator</a></li>
+<li>JSON のフォーマットに注意（改行、スペース）</li>
+</ul>
+<h2 id="まとめ">まとめ</h2>
+<p>署名検証は、Webhook のセキュリティに不可欠です。正しく設定することで、なりすましや改ざんを防ぎ、安全に外部サービスと連携できます。</p>
+<h2 id="関連ページ">関連ページ</h2>
+<ul>
+<li><a href="jsonpath.html">JSONPath 条件の書き方</a></li>
+<li><a href="operators.html">演算子リファレンス</a></li>
+<li><a href="../troubleshooting/signature-errors.md">トラブルシューティング</a></li>
+</ul>
+
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="operators.html" class="navigation navigation-prev " aria-label="Previous page: 演算子リファレンス">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="../integrations/" class="navigation navigation-next " aria-label="Next page: サービス連携例">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"署名検証の設定","level":"2.4.3","depth":2,"next":{"title":"サービス連携例","level":"2.5","depth":1,"path":"webhook/integrations/README.md","ref":"webhook/integrations/README.md","articles":[]},"previous":{"title":"演算子リファレンス","level":"2.4.2","depth":2,"path":"webhook/custom/operators.md","ref":"webhook/custom/operators.md","articles":[]},"dir":"ltr"},"config":{"plugins":[],"root":".","styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"pluginsConfig":{"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56},"embedFonts":false},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"title":"agentapi-ui ドキュメント","language":"ja","gitbook":"3.2.3","description":"agentapi-ui の完全なドキュメント"},"file":{"path":"webhook/custom/signature.md","mtime":"2026-01-12T08:08:24.476Z","type":"markdown"},"gitbook":{"version":"6.1.4","time":"2026-01-12T08:15:40.503Z"},"basePath":"../..","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <noscript>
+        <style>
+            .honkit-cloak {
+                display: block !important;
+            }
+        </style>
+    </noscript>
+    <script>
+        // Restore sidebar state as critical path for prevent layout shift
+        function __init__getSidebarState(defaultValue){
+            var baseKey = "";
+            var key = baseKey + ":sidebar";
+            try {
+                var value = localStorage[key];
+                if (value === undefined) {
+                    return defaultValue;
+                }
+                var parsed = JSON.parse(value);
+                return parsed == null ? defaultValue : parsed;
+            } catch (e) {
+                return defaultValue;
+            }
+        }
+        function __init__restoreLastSidebarState() {
+            var isMobile = window.matchMedia("(max-width: 600px)").matches;
+            if (isMobile) {
+                // Init last state if not mobile
+                return;
+            }
+            var sidebarState = __init__getSidebarState(true);
+            var book = document.querySelector(".book");
+            // Show sidebar if it enabled
+            if (sidebarState && book) {
+                book.classList.add("without-animation", "with-summary");
+            }
+        }
+
+        try {
+            __init__restoreLastSidebarState();
+        } finally {
+            var book = document.querySelector(".book");
+            book.classList.remove("honkit-cloak");
+        }
+    </script>
+    <script src="../../gitbook/gitbook.js"></script>
+    <script src="../../gitbook/theme.js"></script>
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="../../gitbook/@honkit/honkit-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+

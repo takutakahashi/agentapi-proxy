@@ -1,0 +1,15 @@
+agentapi-ui has been installed.
+
+{{- if .Values.cookieEncryptionSecret.enabled }}
+The frontend requires Secret {{ .Values.cookieEncryptionSecret.secretName }} with key
+{{ .Values.cookieEncryptionSecret.secretKey }} for authentication cookies.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+Application URL:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+Use kubectl port-forward to access the {{ include "agentapi-ui.fullname" . }} Service.
+{{- end }}

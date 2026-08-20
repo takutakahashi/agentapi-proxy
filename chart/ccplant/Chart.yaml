@@ -1,0 +1,22 @@
+apiVersion: v2
+name: ccplant
+description: AgentAPI backend and frontend as one release
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/ccplant/ccplant
+sources:
+  - https://github.com/ccplant/ccplant
+maintainers:
+  - name: takutakahashi
+dependencies:
+  - name: agentapi-proxy
+    alias: backend
+    version: 0.3.0
+    repository: file://../../backend/helm/agentapi-proxy
+    condition: backend.enabled
+  - name: agentapi-ui
+    alias: frontend
+    version: 0.1.0
+    repository: file://../../frontend/helm/agentapi-ui
+    condition: frontend.enabled

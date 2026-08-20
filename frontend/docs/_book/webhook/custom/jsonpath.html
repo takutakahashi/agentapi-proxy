@@ -1,0 +1,1069 @@
+
+<!DOCTYPE HTML>
+<html lang="ja" >
+    <head>
+        <meta charset="UTF-8">
+        <title>JSONPath 条件の書き方 · agentapi-ui ドキュメント</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="HonKit 6.1.4">
+        
+        
+        
+    
+    <link rel="stylesheet" href="../../gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="../../gitbook/@honkit/honkit-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../../gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="../../gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="operators.html" />
+    
+    
+    <link rel="prev" href="./" />
+    
+
+    </head>
+    <body>
+        
+<div class="book honkit-cloak">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="検索ワードを入力" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+
+    
+
+    
+        
+        <li class="header">はじめに</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="../../">
+            
+                <a href="../../">
+            
+                    
+                    agentapi-ui ドキュメント
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.2" data-path="../../getting-started/">
+            
+                <a href="../../getting-started/">
+            
+                    
+                    クイックスタート
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.3" data-path="../../getting-started/concepts.html">
+            
+                <a href="../../getting-started/concepts.html">
+            
+                    
+                    基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Webhook</li>
+        
+        
+    
+        <li class="chapter " data-level="2.1" data-path="../">
+            
+                <a href="../">
+            
+                    
+                    Webhook とは
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="2.1.1" data-path="../introduction/overview.html">
+            
+                <a href="../introduction/overview.html">
+            
+                    
+                    概要と基本概念
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.1.2" data-path="../introduction/agentapi-proxy.html">
+            
+                <a href="../introduction/agentapi-proxy.html">
+            
+                    
+                    agentapi-proxy における Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.2" data-path="../setup/">
+            
+                <a href="../setup/">
+            
+                    
+                    セットアップ
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="../github/">
+            
+                <a href="../github/">
+            
+                    
+                    GitHub Webhook
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4" data-path="./">
+            
+                <a href="./">
+            
+                    
+                    Custom Webhook
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter active" data-level="2.4.1" data-path="jsonpath.html">
+            
+                <a href="jsonpath.html">
+            
+                    
+                    JSONPath 条件の書き方
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.2" data-path="operators.html">
+            
+                <a href="operators.html">
+            
+                    
+                    演算子リファレンス
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.4.3" data-path="signature.html">
+            
+                <a href="signature.html">
+            
+                    
+                    署名検証の設定
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="2.5" data-path="../integrations/">
+            
+                <a href="../integrations/">
+            
+                    
+                    サービス連携例
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.6" data-path="../troubleshooting/">
+            
+                <a href="../troubleshooting/">
+            
+                    
+                    トラブルシューティング
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">API</li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" data-path="../../api/">
+            
+                <a href="../../api/">
+            
+                    
+                    API の概要
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.2" data-path="../../api/authentication.html">
+            
+                <a href="../../api/authentication.html">
+            
+                    
+                    認証
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="3.3" data-path="../../api/endpoints.html">
+            
+                <a href="../../api/endpoints.html">
+            
+                    
+                    エンドポイント
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">デプロイメント</li>
+        
+        
+    
+        <li class="chapter " data-level="4.1" data-path="../../deployment/">
+            
+                <a href="../../deployment/">
+            
+                    
+                    デプロイ方法
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="4.2" data-path="../../deployment/configuration.html">
+            
+                <a href="../../deployment/configuration.html">
+            
+                    
+                    設定ガイド
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">リファレンス</li>
+        
+        
+    
+        <li class="chapter " data-level="5.1" data-path="../../reference/glossary.html">
+            
+                <a href="../../reference/glossary.html">
+            
+                    
+                    用語集
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="5.2" data-path="../../reference/faq.html">
+            
+                <a href="../../reference/faq.html">
+            
+                    
+                    FAQ
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://github.com/honkit/honkit" target="blank" class="gitbook-link">
+            HonKitで公開 
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="../.." >JSONPath 条件の書き方</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h1 id="jsonpath-条件の書き方">JSONPath 条件の書き方</h1>
+<p>JSONPath は、JSON ドキュメント内の値にアクセスするためのクエリ言語です。Custom Webhook では、JSONPath を使ってペイロードから値を抽出し、条件を評価します。</p>
+<h2 id="jsonpath-の基礎">JSONPath の基礎</h2>
+<h3 id="基本構文">基本構文</h3>
+<table>
+<thead>
+<tr>
+<th>構文</th>
+<th>説明</th>
+<th>例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$</code></td>
+<td>ルート要素</td>
+<td><code>$</code></td>
+</tr>
+<tr>
+<td><code>.</code></td>
+<td>子要素へのアクセス</td>
+<td><code>$.event</code></td>
+</tr>
+<tr>
+<td><code>[]</code></td>
+<td>配列要素へのアクセス</td>
+<td><code>$.items[0]</code></td>
+</tr>
+<tr>
+<td><code>*</code></td>
+<td>ワイルドカード</td>
+<td><code>$.items[*].name</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="例-基本的なペイロード">例: 基本的なペイロード</h3>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"event"</span>: {
+    <span class="hljs-string">"type"</span>: <span class="hljs-string">"alert"</span>,
+    <span class="hljs-string">"severity"</span>: <span class="hljs-string">"critical"</span>,
+    <span class="hljs-string">"message"</span>: <span class="hljs-string">"High CPU usage"</span>
+  },
+  <span class="hljs-string">"service"</span>: {
+    <span class="hljs-string">"name"</span>: <span class="hljs-string">"api-server"</span>,
+    <span class="hljs-string">"version"</span>: <span class="hljs-string">"v1.0.0"</span>
+  },
+  <span class="hljs-string">"tags"</span>: [<span class="hljs-string">"production"</span>, <span class="hljs-string">"urgent"</span>]
+}
+</code></pre>
+<p><strong>アクセス例</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>JSONPath</th>
+<th>取得される値</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$.event.type</code></td>
+<td><code>"alert"</code></td>
+<td>event オブジェクトの type フィールド</td>
+</tr>
+<tr>
+<td><code>$.event.severity</code></td>
+<td><code>"critical"</code></td>
+<td>event オブジェクトの severity フィールド</td>
+</tr>
+<tr>
+<td><code>$.service.name</code></td>
+<td><code>"api-server"</code></td>
+<td>service オブジェクトの name フィールド</td>
+</tr>
+<tr>
+<td><code>$.tags[0]</code></td>
+<td><code>"production"</code></td>
+<td>tags 配列の最初の要素</td>
+</tr>
+<tr>
+<td><code>$.tags[1]</code></td>
+<td><code>"urgent"</code></td>
+<td>tags 配列の2番目の要素</td>
+</tr>
+</tbody>
+</table>
+<h2 id="条件の基本構造">条件の基本構造</h2>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<h3 id="フィールドの説明">フィールドの説明</h3>
+<table>
+<thead>
+<tr>
+<th>フィールド</th>
+<th>型</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path</code></td>
+<td>string</td>
+<td>JSONPath 式</td>
+</tr>
+<tr>
+<td><code>operator</code></td>
+<td>string</td>
+<td>演算子（<code>eq</code>, <code>ne</code>, <code>contains</code> など）</td>
+</tr>
+<tr>
+<td><code>value</code></td>
+<td>any</td>
+<td>比較対象の値</td>
+</tr>
+</tbody>
+</table>
+<h2 id="実践例">実践例</h2>
+<h3 id="例-1-単純な等価チェック">例 1: 単純な等価チェック</h3>
+<p><strong>要件</strong>: イベントタイプが <code>"alert"</code> の場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"event"</span>: {
+    <span class="hljs-string">"type"</span>: <span class="hljs-string">"alert"</span>
+  }
+}
+</code></pre>
+<h3 id="例-2-複数の条件（and）">例 2: 複数の条件（AND）</h3>
+<p><strong>要件</strong>: severity が <code>"critical"</code> かつ environment が <code>"production"</code> の場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"critical"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.environment"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"severity"</span>: <span class="hljs-string">"critical"</span>,
+  <span class="hljs-string">"environment"</span>: <span class="hljs-string">"production"</span>
+}
+</code></pre>
+<h3 id="例-3-ネストされたオブジェクト">例 3: ネストされたオブジェクト</h3>
+<p><strong>要件</strong>: service.status が <code>"down"</code> の場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.service.status"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"down"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"service"</span>: {
+    <span class="hljs-string">"name"</span>: <span class="hljs-string">"api-server"</span>,
+    <span class="hljs-string">"status"</span>: <span class="hljs-string">"down"</span>
+  }
+}
+</code></pre>
+<h3 id="例-4-配列の要素チェック">例 4: 配列の要素チェック</h3>
+<p><strong>要件</strong>: tags に <code>"production"</code> が含まれる場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"tags"</span>: [<span class="hljs-string">"production"</span>, <span class="hljs-string">"urgent"</span>, <span class="hljs-string">"critical"</span>]
+}
+</code></pre>
+<h3 id="例-5-数値の比較">例 5: 数値の比較</h3>
+<p><strong>要件</strong>: CPU 使用率が 90 より大きい場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.metrics.cpu_usage"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gt"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-number">90</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"metrics"</span>: {
+    <span class="hljs-string">"cpu_usage"</span>: <span class="hljs-number">95.5</span>
+  }
+}
+</code></pre>
+<h3 id="例-6-正規表現マッチ">例 6: 正規表現マッチ</h3>
+<p><strong>要件</strong>: service 名が <code>"api-"</code> で始まる場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.service.name"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"^api-.*"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"service"</span>: {
+    <span class="hljs-string">"name"</span>: <span class="hljs-string">"api-server"</span>
+  }
+}
+</code></pre>
+<h3 id="例-7-複数値のチェック（in-演算子）">例 7: 複数値のチェック（in 演算子）</h3>
+<p><strong>要件</strong>: environment が <code>"production"</code> または <code>"staging"</code> の場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.environment"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+        <span class="hljs-string">"value"</span>: [<span class="hljs-string">"production"</span>, <span class="hljs-string">"staging"</span>]
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"environment"</span>: <span class="hljs-string">"production"</span>
+}
+</code></pre>
+<p>または</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"environment"</span>: <span class="hljs-string">"staging"</span>
+}
+</code></pre>
+<h3 id="例-8-フィールドの存在チェック">例 8: フィールドの存在チェック</h3>
+<p><strong>要件</strong>: error フィールドが存在する場合のみトリガー</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"error"</span>: {
+    <span class="hljs-string">"code"</span>: <span class="hljs-string">"500"</span>,
+    <span class="hljs-string">"message"</span>: <span class="hljs-string">"Internal Server Error"</span>
+  }
+}
+</code></pre>
+<h2 id="複雑な例">複雑な例</h2>
+<h3 id="例-9-実践的な-datadog-アラート">例 9: 実践的な Datadog アラート</h3>
+<p><strong>要件</strong>:</p>
+<ul>
+<li>アラートタイプが <code>"metric_alert"</code> である</li>
+<li>現在の値が 90 より大きい</li>
+<li>タグに <code>"env:production"</code> が含まれる</li>
+</ul>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.alert_type"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"metric_alert"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.current_value"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"gt"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-number">90</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.tags"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"contains"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"env:production"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"alert_type"</span>: <span class="hljs-string">"metric_alert"</span>,
+  <span class="hljs-string">"current_value"</span>: <span class="hljs-number">95.3</span>,
+  <span class="hljs-string">"threshold"</span>: <span class="hljs-number">90</span>,
+  <span class="hljs-string">"metric"</span>: <span class="hljs-string">"system.cpu.user"</span>,
+  <span class="hljs-string">"host"</span>: <span class="hljs-string">"web-server-01"</span>,
+  <span class="hljs-string">"tags"</span>: [<span class="hljs-string">"env:production"</span>, <span class="hljs-string">"service:web"</span>, <span class="hljs-string">"region:us-east-1"</span>]
+}
+</code></pre>
+<h3 id="例-10-slack-インシデント通知">例 10: Slack インシデント通知</h3>
+<p><strong>要件</strong>:</p>
+<ul>
+<li>イベントタイプが <code>"incident"</code> である</li>
+<li>severity が <code>"critical"</code> または <code>"high"</code> である</li>
+<li>environment が <code>"production"</code> である</li>
+<li>status が <code>"triggered"</code> である</li>
+</ul>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"incident"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.severity"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+        <span class="hljs-string">"value"</span>: [<span class="hljs-string">"critical"</span>, <span class="hljs-string">"high"</span>]
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.environment"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"production"</span>
+      },
+      {
+        <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.status"</span>,
+        <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>,
+        <span class="hljs-string">"value"</span>: <span class="hljs-string">"triggered"</span>
+      }
+    ]
+  }
+}
+</code></pre>
+<p><strong>マッチするペイロード</strong>:</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"event"</span>: {
+    <span class="hljs-string">"type"</span>: <span class="hljs-string">"incident"</span>,
+    <span class="hljs-string">"id"</span>: <span class="hljs-string">"INC-12345"</span>,
+    <span class="hljs-string">"title"</span>: <span class="hljs-string">"Database connection pool exhausted"</span>,
+    <span class="hljs-string">"severity"</span>: <span class="hljs-string">"critical"</span>,
+    <span class="hljs-string">"environment"</span>: <span class="hljs-string">"production"</span>,
+    <span class="hljs-string">"status"</span>: <span class="hljs-string">"triggered"</span>,
+    <span class="hljs-string">"timestamp"</span>: <span class="hljs-string">"2026-01-12T10:30:00Z"</span>
+  },
+  <span class="hljs-string">"user"</span>: {
+    <span class="hljs-string">"id"</span>: <span class="hljs-string">"U12345"</span>,
+    <span class="hljs-string">"name"</span>: <span class="hljs-string">"john.doe"</span>
+  }
+}
+</code></pre>
+<h2 id="ベストプラクティス">ベストプラクティス</h2>
+<h3 id="1-必要最小限の条件を設定">1. 必要最小限の条件を設定</h3>
+<p>条件が多すぎると、マッチする確率が下がります。本当に必要な条件だけを設定しましょう。</p>
+<p>❌ <strong>悪い例</strong>: 過剰な条件</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>},
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.id"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>},
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.timestamp"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>},
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.user"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>}
+    ]
+  }
+}
+</code></pre>
+<p>✅ <strong>良い例</strong>: 必要な条件のみ</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>}
+    ]
+  }
+}
+</code></pre>
+<h3 id="2-明示的な値を使う">2. 明示的な値を使う</h3>
+<p>ワイルドカードや曖昧なパターンは避け、明確な値を指定しましょう。</p>
+<p>❌ <strong>悪い例</strong>: 曖昧なパターン</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"matches"</span>,
+  <span class="hljs-string">"value"</span>: <span class="hljs-string">".*"</span>
+}
+</code></pre>
+<p>✅ <strong>良い例</strong>: 明示的な値</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>,
+  <span class="hljs-string">"operator"</span>: <span class="hljs-string">"in"</span>,
+  <span class="hljs-string">"value"</span>: [<span class="hljs-string">"critical"</span>, <span class="hljs-string">"high"</span>, <span class="hljs-string">"medium"</span>]
+}
+</code></pre>
+<h3 id="3-存在チェックを活用">3. 存在チェックを活用</h3>
+<p>オプショナルなフィールドがある場合は、<code>exists</code> 演算子で存在を確認してからアクセスしましょう。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"conditions"</span>: {
+    <span class="hljs-string">"jsonpath"</span>: [
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"exists"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-literal">true</span>},
+      {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.error.code"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"500"</span>}
+    ]
+  }
+}
+</code></pre>
+<h3 id="4-優先度を活用">4. 優先度を活用</h3>
+<p>複数のトリガーを設定する場合は、優先度を使って評価順序を制御しましょう。</p>
+<pre><code class="lang-json">{
+  <span class="hljs-string">"triggers"</span>: [
+    {
+      <span class="hljs-string">"name"</span>: <span class="hljs-string">"Critical Alerts"</span>,
+      <span class="hljs-string">"priority"</span>: <span class="hljs-number">100</span>,
+      <span class="hljs-string">"conditions"</span>: {
+        <span class="hljs-string">"jsonpath"</span>: [
+          {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"critical"</span>}
+        ]
+      }
+    },
+    {
+      <span class="hljs-string">"name"</span>: <span class="hljs-string">"All Alerts"</span>,
+      <span class="hljs-string">"priority"</span>: <span class="hljs-number">10</span>,
+      <span class="hljs-string">"conditions"</span>: {
+        <span class="hljs-string">"jsonpath"</span>: [
+          {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>}
+        ]
+      }
+    }
+  ]
+}
+</code></pre>
+<h2 id="デバッグのコツ">デバッグのコツ</h2>
+<h3 id="1-ペイロードを確認">1. ペイロードを確認</h3>
+<p>まず、実際に送信されるペイロードの構造を確認しましょう。</p>
+<pre><code class="lang-bash">curl -X POST https://your-webhook-url \
+  -H <span class="hljs-string">"Content-Type: application/json"</span> \
+  -d @payload.json
+</code></pre>
+<h3 id="2-delivery-record-を確認">2. Delivery Record を確認</h3>
+<p>agentapi-proxy の Delivery Record 機能を使って、受信したペイロードとマッチング結果を確認できます。</p>
+<h3 id="3-段階的に条件を追加">3. 段階的に条件を追加</h3>
+<p>最初は単純な条件から始めて、徐々に複雑にしていきましょう。</p>
+<p><strong>ステップ 1</strong>: 基本的な条件</p>
+<pre><code class="lang-json">{<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>}
+</code></pre>
+<p><strong>ステップ 2</strong>: 条件を追加</p>
+<pre><code class="lang-json">[
+  {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.event.type"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"alert"</span>},
+  {<span class="hljs-string">"path"</span>: <span class="hljs-string">"$.severity"</span>, <span class="hljs-string">"operator"</span>: <span class="hljs-string">"eq"</span>, <span class="hljs-string">"value"</span>: <span class="hljs-string">"critical"</span>}
+]
+</code></pre>
+<h2 id="まとめ">まとめ</h2>
+<p>JSONPath を使った条件設定は、Custom Webhook の最も強力な機能です。基本的な構文を理解し、演算子を適切に使うことで、様々なペイロード構造に対応できます。</p>
+<p>次のページでは、利用可能な演算子について詳しく見ていきましょう。</p>
+<h2 id="関連ページ">関連ページ</h2>
+<ul>
+<li><a href="operators.html">演算子リファレンス</a> - すべての演算子の詳細</li>
+<li><a href="signature.html">署名検証の設定</a> - セキュリティ設定</li>
+<li><a href="../integrations/">実用例集</a> - サービスごとの設定例</li>
+</ul>
+
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="./" class="navigation navigation-prev " aria-label="Previous page: Custom Webhook">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="operators.html" class="navigation navigation-next " aria-label="Next page: 演算子リファレンス">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"JSONPath 条件の書き方","level":"2.4.1","depth":2,"next":{"title":"演算子リファレンス","level":"2.4.2","depth":2,"path":"webhook/custom/operators.md","ref":"webhook/custom/operators.md","articles":[]},"previous":{"title":"Custom Webhook","level":"2.4","depth":1,"path":"webhook/custom/README.md","ref":"webhook/custom/README.md","articles":[{"title":"JSONPath 条件の書き方","level":"2.4.1","depth":2,"path":"webhook/custom/jsonpath.md","ref":"webhook/custom/jsonpath.md","articles":[]},{"title":"演算子リファレンス","level":"2.4.2","depth":2,"path":"webhook/custom/operators.md","ref":"webhook/custom/operators.md","articles":[]},{"title":"署名検証の設定","level":"2.4.3","depth":2,"path":"webhook/custom/signature.md","ref":"webhook/custom/signature.md","articles":[]}]},"dir":"ltr"},"config":{"plugins":[],"root":".","styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"pluginsConfig":{"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56},"embedFonts":false},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"title":"agentapi-ui ドキュメント","language":"ja","gitbook":"3.2.3","description":"agentapi-ui の完全なドキュメント"},"file":{"path":"webhook/custom/jsonpath.md","mtime":"2026-01-12T08:06:47.044Z","type":"markdown"},"gitbook":{"version":"6.1.4","time":"2026-01-12T08:15:40.503Z"},"basePath":"../..","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <noscript>
+        <style>
+            .honkit-cloak {
+                display: block !important;
+            }
+        </style>
+    </noscript>
+    <script>
+        // Restore sidebar state as critical path for prevent layout shift
+        function __init__getSidebarState(defaultValue){
+            var baseKey = "";
+            var key = baseKey + ":sidebar";
+            try {
+                var value = localStorage[key];
+                if (value === undefined) {
+                    return defaultValue;
+                }
+                var parsed = JSON.parse(value);
+                return parsed == null ? defaultValue : parsed;
+            } catch (e) {
+                return defaultValue;
+            }
+        }
+        function __init__restoreLastSidebarState() {
+            var isMobile = window.matchMedia("(max-width: 600px)").matches;
+            if (isMobile) {
+                // Init last state if not mobile
+                return;
+            }
+            var sidebarState = __init__getSidebarState(true);
+            var book = document.querySelector(".book");
+            // Show sidebar if it enabled
+            if (sidebarState && book) {
+                book.classList.add("without-animation", "with-summary");
+            }
+        }
+
+        try {
+            __init__restoreLastSidebarState();
+        } finally {
+            var book = document.querySelector(".book");
+            book.classList.remove("honkit-cloak");
+        }
+    </script>
+    <script src="../../gitbook/gitbook.js"></script>
+    <script src="../../gitbook/theme.js"></script>
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="../../gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="../../gitbook/@honkit/honkit-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+

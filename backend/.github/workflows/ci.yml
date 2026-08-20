@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-v2
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Cache agentapi binary
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/agentapi
+        key: ${{ runner.os }}-agentapi-${{ hashFiles('**/go.mod') }}-v2
+        restore-keys: |
+          ${{ runner.os }}-agentapi-
+
+    - name: Download agentapi binary
+      run: |
+        mkdir -p ~/.cache/agentapi
+        if [ ! -f ~/.cache/agentapi/agentapi ]; then
+          echo "Downloading agentapi binary..."
+          curl -L -o ~/.cache/agentapi/agentapi https://github.com/coder/agentapi/releases/latest/download/agentapi-linux-amd64
+          chmod +x ~/.cache/agentapi/agentapi
+        else
+          echo "Using cached agentapi binary"
+        fi
+        sudo ln -sf ~/.cache/agentapi/agentapi /usr/local/bin/agentapi
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Cache Claude Code
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/claude-code
+        key: ${{ runner.os }}-claude-code-${{ hashFiles('**/go.mod') }}-v2
+        restore-keys: |
+          ${{ runner.os }}-claude-code-
+
+    - name: Install Claude Code
+      run: |
+        mkdir -p ~/.cache/claude-code
+        if [ ! -f ~/.cache/claude-code/claude ]; then
+          echo "Installing Claude Code..."
+          npm install -g @anthropic-ai/claude-code
+          cp $(which claude) ~/.cache/claude-code/claude
+        else
+          echo "Using cached Claude Code"
+          sudo ln -sf ~/.cache/claude-code/claude /usr/local/bin/claude
+        fi
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v8
+      with:
+        version: v2.7.2
+
+    - name: Run CI pipeline
+      run: make test

@@ -1,0 +1,16 @@
+{{- if .Values.compatibilityService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.compatibilityService.name }}
+  labels:
+    {{- include "session-manager.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "session-manager.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- end }}
