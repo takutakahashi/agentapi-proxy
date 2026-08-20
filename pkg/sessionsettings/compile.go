@@ -16,9 +16,11 @@ import (
 
 // CompileOptions configures the compile-settings behavior.
 type CompileOptions struct {
-	InputPath   string // Path to settings YAML (default: /session-settings/settings.yaml)
-	OutputDir   string // Base output directory (default: /home/agentapi)
-	EnvFilePath string // Path for env file output (default: /session-settings/env)
+	InputPath string // Path to settings YAML (default: /session-settings/settings.yaml)
+	OutputDir string // Base output directory (default: /home/agentapi)
+	// EnvFilePath is retained for CLI compatibility. Environment variables are
+	// no longer written to disk.
+	EnvFilePath string
 	StartupPath string // Path for startup script (default: /session-settings/startup.sh)
 }
 
@@ -54,7 +56,13 @@ func Compile(opts CompileOptions) error {
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Loaded settings for session %s (user: %s)", settings.Session.ID, settings.Session.UserID)
+	return CompileSettings(&settings, opts)
+}
 
+// CompileSettings generates agent configuration files from settings held in
+// memory. Environment variables may influence generated configuration, but are
+// never serialized to a standalone file.
+func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 	// 2. Generate ~/.claude.json (includes mcpServers if present)
 	if err := generateClaudeJSON(opts.OutputDir, settings.Claude.ClaudeJSON, settings.Claude.MCPServers); err != nil {
 		return fmt.Errorf("failed to generate .claude.json: %w", err)
@@ -100,12 +108,7 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate Pi models.json: %w", err)
 	}
 
-	// 4. Generate env file
-	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
-		return fmt.Errorf("failed to generate env file: %w", err)
-	}
-
-	// 5. Generate startup script
+	// 4. Generate startup script
 	if err := generateStartupScript(opts.StartupPath, settings.Startup); err != nil {
 		return fmt.Errorf("failed to generate startup script: %w", err)
 	}
@@ -368,45 +371,6 @@ func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{})
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", settingsPath)
-	return nil
-}
-
-// generateEnvFile creates env file with sorted KEY=VALUE lines.
-func generateEnvFile(envFilePath string, env map[string]string) error {
-	// Create parent directory if needed
-	envDir := filepath.Dir(envFilePath)
-	if err := os.MkdirAll(envDir, 0755); err != nil {
-		return fmt.Errorf("failed to create env file directory: %w", err)
-	}
-
-	// Sort keys for deterministic output
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	// Build lines
-	var lines []string
-	for _, k := range keys {
-		v := env[k]
-		// Quote value if it contains spaces or special characters
-		if strings.ContainsAny(v, " \t\n\"'\\") {
-			v = fmt.Sprintf(`"%s"`, strings.ReplaceAll(v, `"`, `\"`))
-		}
-		lines = append(lines, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	content := strings.Join(lines, "\n")
-	if len(lines) > 0 {
-		content += "\n" // Add trailing newline
-	}
-
-	if err := os.WriteFile(envFilePath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write env file: %w", err)
-	}
-
-	log.Printf("[COMPILE-SETTINGS] Generated %s (%d variables)", envFilePath, len(env))
 	return nil
 }
 

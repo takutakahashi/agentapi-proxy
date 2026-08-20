@@ -74,7 +74,7 @@ func TestCompile_FullSettings(t *testing.T) {
 	// Verify all files were created
 	assert.FileExists(t, filepath.Join(outputDir, ".claude.json"))
 	assert.FileExists(t, filepath.Join(outputDir, ".claude/settings.json"))
-	assert.FileExists(t, envFile)
+	assert.NoFileExists(t, envFile)
 	assert.FileExists(t, startupFile)
 
 	// Verify mcpServers is written into claude.json
@@ -125,8 +125,8 @@ func TestCompile_MinimalSettings(t *testing.T) {
 	assert.FileExists(t, filepath.Join(outputDir, ".claude.json"))
 	assert.FileExists(t, filepath.Join(outputDir, ".claude/settings.json"))
 
-	// Empty env file should be created
-	assert.FileExists(t, envFile)
+	// Environment state remains process-only, even when empty.
+	assert.NoFileExists(t, envFile)
 
 	// No mcpServers key when no servers configured
 	claudeJSONPath := filepath.Join(outputDir, ".claude.json")
@@ -191,7 +191,7 @@ func TestCompile_ClaudeJSON(t *testing.T) {
 	assert.Equal(t, "customValue", claudeJSON["customKey"])
 }
 
-func TestCompile_EnvFile(t *testing.T) {
+func TestCompile_DoesNotWriteEnvFile(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "compile-env-*")
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(tmpDir) }()
@@ -229,21 +229,8 @@ func TestCompile_EnvFile(t *testing.T) {
 	err = Compile(opts)
 	require.NoError(t, err)
 
-	// Read env file
-	data, err := os.ReadFile(envFile)
-	require.NoError(t, err)
-
-	content := string(data)
-	lines := strings.Split(strings.TrimSpace(content), "\n")
-
-	// Verify sorted order
-	assert.True(t, strings.HasPrefix(lines[0], "A_VAR="))
-	assert.True(t, strings.HasPrefix(lines[1], "M_VAR="))
-	assert.Contains(t, content, "SPACED_VALUE=")
-	assert.Contains(t, content, "Z_VAR=")
-
-	// Verify values with spaces are quoted
-	assert.Contains(t, content, `SPACED_VALUE="value with spaces"`)
+	_, err = os.Stat(envFile)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestCompile_StartupScript(t *testing.T) {

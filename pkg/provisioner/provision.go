@@ -1,7 +1,6 @@
 package provisioner
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -37,7 +36,6 @@ const (
 )
 
 var runtimeHome = provisionerHome()
-var sessionEnvFile = filepath.Join(runtimeHome, ".session", "env")
 var claudeMDPath = filepath.Join(runtimeHome, ".claude", "CLAUDE.md")
 var workdirRepoPath = envPath("AGENTAPI_REPO_DIR", filepath.Join(runtimeHome, "workdir", "repo"))
 var webhookPayloadPath = nativeRuntimePath("webhook", "payload.json", "/opt/webhook/payload.json")
@@ -71,10 +69,6 @@ func nativeRuntimePath(parts ...string) string {
 		return filepath.Join(pathParts...)
 	}
 	return fallback
-}
-
-func provisionSettingsPath() string {
-	return nativeRuntimePath("provision-settings.yaml", filepath.Join(os.TempDir(), fmt.Sprintf("agentapi-provision-settings-%d.yaml", os.Getpid())))
 }
 
 func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
@@ -135,9 +129,8 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 // the agentapi subprocess.
 //
 // Sequence:
-//  1. Write received settings to a temp YAML file
-//  2. Run sessionsettings.Setup() (write-pem, clone-repo, compile, sync-extra)
-//  3. Load the generated session env file
+//  1. Run sessionsettings.SetupSettings() from the received in-memory settings
+//  2. Keep the session environment in memory
 //  4. Fetch memory from the proxy and inject into CLAUDE.md
 //  5. cd into the cloned repo if present
 //  6. Start agentapi (or an ACP bridge) as a subprocess
@@ -156,20 +149,6 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 	}()
 
-	// ── Step 1: write settings to temp YAML ──────────────────────────────────
-	s.setPhase("provision:write-settings")
-	data, err := sessionsettings.MarshalYAML(settings)
-	if err != nil {
-		s.setStatus(StatusError, fmt.Sprintf("failed to marshal settings: %v", err))
-		return
-	}
-	provisionTempSettings := provisionSettingsPath()
-	if err := os.WriteFile(provisionTempSettings, data, 0o600); err != nil {
-		s.setStatus(StatusError, fmt.Sprintf("failed to write temp settings: %v", err))
-		return
-	}
-	defer func() { _ = os.Remove(provisionTempSettings) }()
-
 	// ── Step 1.5: write webhook payload file ─────────────────────────────────
 	// For stock sessions the pod is pre-created without a webhook-payload
 	// Secret volume (payload unknown at pod creation time).  We write the
@@ -184,13 +163,9 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 2: run setup ─────────────────────────────────────────────────────
-	// Override CompileOptions.InputPath to use the temp file written above,
-	// not the default /session-settings/settings.yaml (which is no longer mounted).
 	compileOpts := sessionsettings.DefaultCompileOptions()
-	compileOpts.InputPath = provisionTempSettings
 
 	opts := sessionsettings.SetupOptions{
-		InputPath:                 provisionTempSettings,
 		CompileOptions:            compileOpts,
 		NotificationSubscriptions: nativeRuntimePath("notification-subscriptions-source", "/notification-subscriptions-source"),
 		NotificationsDir:          filepath.Join(runtimeHome, "notifications"),
@@ -198,7 +173,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	s.setPhase("provision:session-setup")
 	log.Printf("[PROVISIONER] Running session setup")
-	if err := sessionsettings.Setup(opts); err != nil {
+	if err := sessionsettings.SetupSettings(settings, opts); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("setup failed: %v", err))
 		return
 	}
@@ -253,10 +228,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		log.Printf("[PROVISIONER] Warning: failed to write Codex managed requirements: %v", err)
 	}
 
-	// ── Step 3: load session env file ─────────────────────────────────────────
+	// Step 3: prepare the process-only session environment.
 	s.setPhase("provision:load-env")
-	envMap := loadEnvFile(sessionEnvFile)
-	log.Printf("[PROVISIONER] Loaded %d env vars from session env file", len(envMap))
+	envMap := cloneEnvironment(settings.Env)
+	log.Printf("[PROVISIONER] Prepared %d in-memory env vars", len(envMap))
 	prepareSciaCABundle(ctx, envMap)
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
@@ -1825,43 +1800,6 @@ func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
 	log.Printf("[PROVISIONER] Memory injected into CLAUDE.md")
 }
 
-// loadEnvFile reads a KEY=VALUE env file and returns the entries as a map.
-// Lines starting with '#' and blank lines are ignored.
-func loadEnvFile(path string) map[string]string {
-	result := make(map[string]string)
-	f, err := os.Open(path)
-	if err != nil {
-		return result
-	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		idx := strings.IndexByte(line, '=')
-		if idx < 0 {
-			continue
-		}
-		key := line[:idx]
-		val := unquoteValue(line[idx+1:])
-		result[key] = val
-	}
-	return result
-}
-
-// unquoteValue removes surrounding single or double quotes from a shell value.
-func unquoteValue(v string) string {
-	if len(v) >= 2 {
-		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
-			return v[1 : len(v)-1]
-		}
-	}
-	return v
-}
-
 // writeWebhookPayloadFile writes the webhook payload JSON string to
 // webhookPayloadPath.  It is a no-op when the file already exists, which is
 // the case for non-stock sessions where a read-only Kubernetes Secret volume
@@ -1917,6 +1855,14 @@ func mergeEnv(base []string, overlay map[string]string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func cloneEnvironment(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // configureNetworkFilterPolicy calls POST /policy on the nfa control server to

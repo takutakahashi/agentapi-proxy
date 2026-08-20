@@ -69,6 +69,16 @@ func Setup(opts SetupOptions) error {
 	if err != nil {
 		return fmt.Errorf("failed to load session settings: %w", err)
 	}
+	return SetupSettings(settings, opts)
+}
+
+// SetupSettings runs setup from an in-memory settings object. Agent-layer
+// callers should use this entry point so environment variables never need an
+// intermediate settings file.
+func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
+	if opts.PEMOutputPath == "" {
+		opts.PEMOutputPath = DefaultSetupOptions().PEMOutputPath
+	}
 
 	// 1. Write GitHub App PEM to disk so git/gh can use it
 	if err := writePEM(settings, opts.PEMOutputPath); err != nil {
@@ -83,8 +93,8 @@ func Setup(opts SetupOptions) error {
 		}
 	}
 
-	// 3. Compile settings.yaml → config files
-	if err := Compile(opts.CompileOptions); err != nil {
+	// 3. Compile in-memory settings → config files
+	if err := CompileSettings(settings, opts.CompileOptions); err != nil {
 		return fmt.Errorf("compile failed: %w", err)
 	}
 

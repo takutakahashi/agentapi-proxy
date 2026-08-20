@@ -23,8 +23,10 @@ var compileSettingsCmd = &cobra.Command{
 This command reads a settings YAML file and generates:
 - ~/.claude.json (Claude onboarding configuration and MCP server configurations)
 - ~/.claude/settings.json (Claude settings with marketplaces)
-- /home/agentapi/.session/env (environment variables as KEY=VALUE)
 - /home/agentapi/.session/startup.sh (startup command script)
+
+Environment variables are not written to disk. The provisioner injects them
+directly into the agent process environment.
 
 MCP server configurations are written directly to ~/.claude.json under the "mcpServers" key,
 which Claude Code reads natively without requiring a separate --mcp-config flag.
@@ -38,8 +40,7 @@ Examples:
   # Custom paths
   agentapi-proxy helpers compile-settings \
     --input /session-settings/settings.yaml \
-    --output-dir /home/agentapi \
-    --env-file /home/agentapi/.session/env`,
+    --output-dir /home/agentapi`,
 	RunE: runCompileSettings,
 }
 
@@ -50,7 +51,8 @@ func init() {
 	compileSettingsCmd.Flags().StringVar(&compileOutputDir, "output-dir", defaults.OutputDir,
 		"Output directory for Claude configuration files")
 	compileSettingsCmd.Flags().StringVar(&compileEnvFilePath, "env-file", defaults.EnvFilePath,
-		"Output path for environment variables file")
+		"Deprecated: environment variables are no longer written to disk")
+	_ = compileSettingsCmd.Flags().MarkDeprecated("env-file", "environment variables are injected directly into agent processes")
 	compileSettingsCmd.Flags().StringVar(&compileStartupPath, "startup-script", defaults.StartupPath,
 		"Output path for startup script")
 

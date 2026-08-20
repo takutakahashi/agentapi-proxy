@@ -49,12 +49,3 @@ func TestNormalizeNativeSettingsRemapsPathsAndDropsContainerTLS(t *testing.T) {
 		t.Fatalf("native environment was not applied: %#v", settings.Env)
 	}
 }
-
-func TestProvisionSettingsPathIsScopedToNativeSession(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("AGENTAPI_NATIVE_SESSION_ROOT", root)
-
-	if got, want := provisionSettingsPath(), filepath.Join(root, "runtime", "provision-settings.yaml"); got != want {
-		t.Fatalf("provision settings path = %q, want %q", got, want)
-	}
-}
